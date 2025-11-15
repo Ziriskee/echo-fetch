@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Downloaded files
+*.part*
+*.temp
+downloads/
+echo_downloads/
+
+# Logs
+*.log
+logs/
+
+# Mobile specific
+*.apk
+*.aab
+
+# Temp files
+*.tmp
+*.temp
