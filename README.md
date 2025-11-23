@@ -1,3 +1,8 @@
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/Ziriskee/echo-fetch)
+![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20android-lightgrey)
+
 # Echo Fetch 🌀
 
 **Intelligent Download Manager with Perfect Data Echoing**

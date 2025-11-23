@@ -3,9 +3,10 @@ import threading
 import queue
 import time
 import tkinter as tk
+import uuid
 from tkinter import filedialog, messagebox
 import os
-from download_engine import FastDownloader
+from echo_core import FastDownloader
 from datetime import datetime
 
 ctk.set_appearance_mode("dark")
@@ -25,12 +26,13 @@ class DownloadItem:
         self.end_time = None
         self.file_size = 0
         self.error_message = ""  # Added for better error tracking
+        self.item_id = str(uuid.uuid4())[:8]  # Unique ID for the item
 
 class DownloadManagerUI(ctk.CTk):
     def __init__(self):
         super().__init__()
         try:
-            self.title("Advanced Download Manager")
+            self.title("Echo-fetch")
             self.geometry("900x700")
             
             # Initialize data structures
