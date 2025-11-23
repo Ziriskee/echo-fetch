@@ -8,6 +8,7 @@ from tkinter import filedialog, messagebox
 import os
 from echo_core import FastDownloader
 from datetime import datetime
+from download_history import DownloadHistory
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -16,6 +17,7 @@ class DownloadItem:
     def __init__(self, url, download_path, filename=None):
         self.url = url
         self.download_path = download_path
+        
         self.filename = filename
         self.status = "Queued"  # Queued, Downloading, Paused, Completed, Error, Cancelled
         self.progress = 0
@@ -33,14 +35,15 @@ class DownloadManagerUI(ctk.CTk):
         super().__init__()
         try:
             self.title("Echo-fetch")
-            self.geometry("900x700")
+            self.geometry("1100x700")
             
             # Initialize data structures
             self.progress_queue = queue.Queue()
             self.download_queue = []
             self.current_download = None
             self.download_folder = os.path.expanduser("~/Downloads")
-            
+            self.history_manager = DownloadHistory()
+
             # Tracking variables
             self.thread_speed = []
             self.thread_percents = []
@@ -67,7 +70,7 @@ class DownloadManagerUI(ctk.CTk):
             right_frame = ctk.CTkFrame(main_frame, width=350)
             right_frame.pack(side="right", fill="both", padx=(5, 0))
             right_frame.pack_propagate(False)
-            
+                
             self._create_download_section(left_frame)
             self._create_queue_section(right_frame)
         except Exception as e:
@@ -141,6 +144,10 @@ class DownloadManagerUI(ctk.CTk):
             # Status Section
             self.status_label = ctk.CTkLabel(parent, text="Idle", text_color="gray", font=ctk.CTkFont(size=12))
             self.status_label.pack(anchor="w", pady=5)
+
+            # History & Statistics Button
+            self.history_btn = ctk.CTkButton(control_frame, text="History & Stats",                             command=self.show_history_statistics)
+            self.history_btn.pack(side="left", padx=5)
             
             # Overall Progress
             progress_frame = ctk.CTkFrame(parent)
@@ -528,6 +535,15 @@ class DownloadManagerUI(ctk.CTk):
     def _run_download_item(self, item):
         """Run the download for a queue item"""
         try:
+            # Record start in history
+            self.history_manager.add_record(
+                url=item.url,
+                filename=item.filename or os.path.basename(item.url),
+                file_size=0,  # Will be updated on completion
+                status="Started",
+                speed=0
+            )
+            
             # Create downloader with progress callback
             downloader = FastDownloader(
                 item.url,
@@ -554,14 +570,205 @@ class DownloadManagerUI(ctk.CTk):
             item.progress = 100
             item.end_time = datetime.now()
             
+            # Record successful completion
+            self.history_manager.add_record(
+                url=item.url,
+                filename=item.filename or os.path.basename(item.url),
+                file_size=item.file_size,
+                status="Completed",
+                speed=sum(self.thread_speed) if self.thread_speed else 0
+            )
+            
         except Exception as e:
             item.status = "Error"
             item.error_message = str(e)
+            
+            # Record error
+            self.history_manager.add_record(
+                url=item.url,
+                filename=item.filename or os.path.basename(item.url),
+                file_size=0,
+                status="Error",
+                speed=0,
+                error_msg=str(e)
+            )
             print(f"Download error: {e}")
         
         finally:
             # Move to next item or finish
             self.after(0, self._download_item_finished)
+
+    def show_history_statistics(self):
+        """Show download history and statistics window"""
+        try:
+            # Create history window
+            history_window = ctk.CTkToplevel(self)
+            history_window.title("Download History & Statistics")
+            history_window.geometry("800x600")
+            history_window.transient(self)
+            history_window.grab_set()
+            
+            # Create tab view
+            tab_view = ctk.CTkTabview(history_window)
+            tab_view.pack(fill="both", expand=True, padx=10, pady=10)
+            
+            # Statistics Tab
+            stats_tab = tab_view.add("Statistics")
+            self._create_stats_tab(stats_tab)
+            
+            # Recent Downloads Tab
+            history_tab = tab_view.add("Recent Downloads")
+            self._create_history_tab(history_tab)
+            
+            # Export Tab
+            export_tab = tab_view.add("Export")
+            self._create_export_tab(export_tab)
+            
+        except Exception as e:
+            messagebox.showerror("History Error", f"Failed to open history: {str(e)}")
+
+    def _create_stats_tab(self, parent):
+        """Create statistics tab content"""
+        # Get statistics
+        stats = self.history_manager.get_statistics(days=30)
+        
+        # Statistics frame
+        stats_frame = ctk.CTkScrollableFrame(parent)
+        stats_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Overall statistics
+        ctk.CTkLabel(stats_frame, text="Last 30 Days Statistics", 
+                    font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", pady=10)
+        
+        # Stats grid
+        stats_grid = ctk.CTkFrame(stats_frame)
+        stats_grid.pack(fill="x", pady=10)
+        
+        stats_data = [
+            ("Total Downloads", f"{stats['total_downloads']}"),
+            ("Successful", f"{stats['successful_downloads']}"),
+            ("Failed", f"{stats['failed_downloads']}"),
+            ("Success Rate", f"{stats['success_rate']:.1f}%"),
+            ("Total Size", f"{stats['total_size'] / (1024*1024*1024):.2f} GB"),
+            ("Average Speed", f"{stats['average_speed']:.2f} MB/s")
+        ]
+        
+        for i, (label, value) in enumerate(stats_data):
+            row = i % 3
+            col = i // 3
+            
+            stat_frame = ctk.CTkFrame(stats_grid)
+            stat_frame.grid(row=row, column=col, padx=10, pady=10, sticky="ew")
+            
+            ctk.CTkLabel(stat_frame, text=label, font=ctk.CTkFont(size=12), 
+                        text_color="gray").pack(anchor="w")
+            ctk.CTkLabel(stat_frame, text=value, font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w")
+
+    def _create_history_tab(self, parent):
+        """Create recent downloads history tab"""
+        # Get recent downloads
+        recent_downloads = self.history_manager.get_recent_downloads(limit=100)
+        
+        # History frame
+        history_frame = ctk.CTkScrollableFrame(parent)
+        history_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        if not recent_downloads:
+            ctk.CTkLabel(history_frame, text="No download history yet", 
+                        text_color="gray").pack(pady=20)
+            return
+        
+        for record in recent_downloads:
+            self._create_history_item(history_frame, record)
+
+    def _create_history_item(self, parent, record):
+        """Create a single history item"""
+        item_frame = ctk.CTkFrame(parent)
+        item_frame.pack(fill="x", pady=2, padx=5)
+        
+        # Status color
+        status_colors = {
+            "Completed": "green",
+            "Error": "red",
+            "Started": "blue",
+            "Cancelled": "gray"
+        }
+        
+        # Left side - Basic info
+        left_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
+        left_frame.pack(side="left", fill="both", expand=True, padx=5, pady=3)
+        
+        # Filename and status
+        filename = record.get('filename', 'Unknown')
+        display_name = filename[:50] + "..." if len(filename) > 50 else filename
+        
+        ctk.CTkLabel(left_frame, text=display_name, 
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    anchor="w").pack(fill="x")
+        
+        status_text = f"Status: {record['status']}"
+        if record.get('file_size'):
+            size_mb = record['file_size'] / (1024 * 1024)
+            status_text += f" | Size: {size_mb:.1f} MB"
+        if record.get('download_speed'):
+            status_text += f" | Speed: {record['download_speed']:.2f} MB/s"
+        
+        ctk.CTkLabel(left_frame, text=status_text,
+                    text_color=status_colors.get(record['status'], "gray"),
+                    font=ctk.CTkFont(size=10),
+                    anchor="w").pack(fill="x")
+        
+        # Timestamp
+        timestamp = datetime.fromisoformat(record['timestamp']).strftime("%Y-%m-%d %H:%M:%S")
+        ctk.CTkLabel(left_frame, text=timestamp,
+                    font=ctk.CTkFont(size=9),
+                    text_color="lightgray",
+                    anchor="w").pack(fill="x")
+
+    def _create_export_tab(self, parent):
+        """Create export tab content"""
+        export_frame = ctk.CTkFrame(parent)
+        export_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        ctk.CTkLabel(export_frame, text="Export Options",
+                    font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
+        
+        # Export buttons
+        ctk.CTkButton(export_frame, text="Export to CSV", 
+                    command=self.export_history_csv,
+                    width=200).pack(pady=10)
+        
+        ctk.CTkButton(export_frame, text="Clear History", 
+                    command=self.clear_history,
+                    fg_color="red", hover_color="darkred",
+                    width=200).pack(pady=10)
+        
+        # History info
+        total_records = len(self.history_manager.history)
+        ctk.CTkLabel(export_frame, text=f"Total records: {total_records}",
+                    font=ctk.CTkFont(size=12),
+                    text_color="gray").pack(pady=10)
+
+    def export_history_csv(self):
+        """Export history to CSV"""
+        try:
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            )
+            if filename:
+                if self.history_manager.export_to_csv(filename):
+                    messagebox.showinfo("Export Successful", f"History exported to {filename}")
+                else:
+                    messagebox.showerror("Export Failed", "Failed to export history")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Export failed: {str(e)}")
+
+    def clear_history(self):
+        """Clear all download history"""
+        if messagebox.askyesno("Confirm Clear", "Clear all download history? This cannot be undone."):
+            self.history_manager.clear_history()
+            messagebox.showinfo("History Cleared", "Download history has been cleared")
 
     def _download_item_finished(self):
         """Handle completion of a download item"""
