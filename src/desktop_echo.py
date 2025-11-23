@@ -9,6 +9,7 @@ import os
 from echo_core import FastDownloader
 from datetime import datetime
 from download_history import DownloadHistory
+import json
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -34,14 +35,31 @@ class DownloadManagerUI(ctk.CTk):
     def __init__(self):
         super().__init__()
         try:
+            # Load settings
+            settings = self._load_settings()
+
+            # Apply saved theme
+            saved_theme = self.load_theme_preference()
+            ctk.set_appearance_mode(saved_theme)
+            
+            # Apply saved download folder
+            self.download_folder = settings.get('download_folder', os.path.expanduser("~/Downloads"))
+    
+            saved_scale = settings.get('ui_scale',1.0)
+            if saved_scale != 1.0:
+                try:
+                    ctk.set_widget_scaling(saved_scale)
+                except:
+                    pass
+
             self.title("Echo-fetch")
             self.geometry("1100x700")
-            
+                        
+
             # Initialize data structures
             self.progress_queue = queue.Queue()
             self.download_queue = []
             self.current_download = None
-            self.download_folder = os.path.expanduser("~/Downloads")
             self.history_manager = DownloadHistory()
 
             # Tracking variables
@@ -54,6 +72,42 @@ class DownloadManagerUI(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Initialization Error", f"Failed to initialize application: {str(e)}")
             raise
+
+    def _save_theme_preference(self, theme):
+        """Save theme preference to file for persistence"""
+        try:
+            config_dir = os.path.expanduser("~/.download_manager")
+            os.makedirs(config_dir, exist_ok=True)
+            
+            config_file = os.path.join(config_dir, "settings.json")
+            config = {}
+            
+            # Load existing config if available
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+            
+            # Update theme setting
+            config['theme'] = theme
+            
+            # Save config
+            with open(config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+                
+        except Exception as e:
+            print(f"Could not save theme preference: {e}")
+
+    def _load_theme_preference(self):
+        """Load saved theme preference"""
+        try:
+            config_file = os.path.expanduser("~/.download_manager/settings.json")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    return config.get('theme', 'Dark')
+        except Exception as e:
+            print(f"Could not load theme preference: {e}")
+        return "Dark"  # Default theme
 
     def _create_widgets(self):
         """Create and arrange all UI widgets"""
@@ -75,6 +129,380 @@ class DownloadManagerUI(ctk.CTk):
             self._create_queue_section(right_frame)
         except Exception as e:
             messagebox.showerror("UI Error", f"Failed to create widgets: {str(e)}")
+
+    def show_preferences(self):
+        """Show preferences/settings window"""
+        try:
+            # Create preferences window
+            pref_window = ctk.CTkToplevel(self)
+            pref_window.title("Preferences")
+            pref_window.geometry("500x600")
+            pref_window.transient(self)
+            pref_window.grab_set()
+            
+            # Create tab view for different settings categories
+            tab_view = ctk.CTkTabview(pref_window)
+            tab_view.pack(fill="both", expand=True, padx=10, pady=10)
+            
+            # Appearance Tab
+            appearance_tab = tab_view.add("Appearance")
+            self._create_appearance_tab(appearance_tab)
+            
+            # Download Tab
+            download_tab = tab_view.add("Download")
+            self._create_download_tab(download_tab)
+            
+            # General Tab
+            general_tab = tab_view.add("General")
+            self._create_general_tab(general_tab)
+            
+        except Exception as e:
+            messagebox.showerror("Preferences Error", f"Failed to open preferences: {str(e)}")
+
+    def _create_appearance_tab(self, parent):
+        """Create appearance settings tab"""
+        try:
+            # Theme Section
+            theme_frame = ctk.CTkFrame(parent)
+            theme_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(theme_frame, text="Theme Settings", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+            
+            # Current theme display
+            current_theme = ctk.get_appearance_mode()
+            self.current_theme_label = ctk.CTkLabel(theme_frame, 
+                                                text=f"Current Theme: {current_theme}",
+                                                font=ctk.CTkFont(size=14))
+            self.current_theme_label.pack(anchor="w", pady=5)
+            
+            # Theme toggle button
+            theme_btn_frame = ctk.CTkFrame(theme_frame, fg_color="transparent")
+            theme_btn_frame.pack(fill="x", pady=10)
+            
+            ctk.CTkButton(theme_btn_frame, text="Toggle Dark/Light Theme", 
+                        command=self.toggle_theme, width=200).pack(side="left", padx=(0, 10))
+            
+            # Theme selection (alternative method)
+            ctk.CTkLabel(theme_btn_frame, text="Or select:", 
+                        font=ctk.CTkFont(size=12)).pack(side="left", padx=(20, 10))
+            
+            theme_var = ctk.StringVar(value=current_theme)
+            theme_combo = ctk.CTkComboBox(theme_btn_frame, 
+                                        values=["Dark", "Light"],
+                                        variable=theme_var,
+                                        command=self.change_theme,
+                                        width=100)
+            theme_combo.pack(side="left")
+            
+            # UI Scale Section
+            scale_frame = ctk.CTkFrame(parent)
+            scale_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(scale_frame, text="UI Scaling", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+            
+            ctk.CTkLabel(scale_frame, text="Adjust UI scaling (requires restart):",
+                        font=ctk.CTkFont(size=12)).pack(anchor="w", pady=5)
+            
+            current_scale = self._load_setting('ui_scale',1.0)
+            scale_percent = f"{int(current_scale * 100)}%"
+
+            scale_var = ctk.StringVar(value="100%")
+            scale_combo = ctk.CTkComboBox(scale_frame,
+                                        values=["80%", "90%", "100%", "110%", "120%"],
+                                        variable=scale_var,
+                                        command=self.change_ui_scale,
+                                        width=100)
+            scale_combo.pack(anchor="w", pady=5)
+            
+        except Exception as e:
+            print(f"Appearance tab error: {e}")
+
+    def _create_download_tab(self, parent):
+        """Create download settings tab"""
+        try:
+            # Download Folder Section
+            folder_frame = ctk.CTkFrame(parent)
+            folder_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(folder_frame, text="Download Location", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+            
+            # Current folder display
+            folder_display_frame = ctk.CTkFrame(folder_frame, fg_color="transparent")
+            folder_display_frame.pack(fill="x", pady=5)
+            
+            ctk.CTkLabel(folder_display_frame, text="Current folder:", 
+                        font=ctk.CTkFont(size=12)).pack(anchor="w")
+            
+            self.pref_folder_label = ctk.CTkLabel(folder_display_frame, 
+                                                text=self.download_folder,
+                                                font=ctk.CTkFont(size=11),
+                                                text_color="gray",
+                                                wraplength=400)
+            self.pref_folder_label.pack(anchor="w", pady=2)
+            
+            ctk.CTkButton(folder_display_frame, text="Change Download Folder", 
+                        command=self.change_download_folder, width=180).pack(anchor="w", pady=5)
+           
+            # Download Behavior Section
+            behavior_frame = ctk.CTkFrame(parent)
+            behavior_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(behavior_frame, text="Download Behavior", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+            
+            # Auto-start downloads
+            self.auto_start_var = ctk.BooleanVar(value=self._load_setting('auto_start', False))
+            auto_start_cb = ctk.CTkCheckBox(behavior_frame, 
+                                        text="Auto-start downloads when added to queue",
+                                        variable=self.auto_start_var,
+                                        command=self.toggle_auto_start)
+            auto_start_cb.pack(anchor="w", pady=5)
+            
+            # Auto-remove completed
+            self.auto_remove_var = ctk.BooleanVar(value=self._load_setting('auto_remove', False))
+            auto_remove_cb = ctk.CTkCheckBox(behavior_frame, 
+                                        text="Auto-remove completed downloads from queue",
+                                        variable=self.auto_remove_var,
+                                        command=self.toggle_auto_remove)
+            auto_remove_cb.pack(anchor="w", pady=5)
+            
+            # Default thread count
+            thread_frame = ctk.CTkFrame(behavior_frame, fg_color="transparent")
+            thread_frame.pack(fill="x", pady=10)
+            
+            ctk.CTkLabel(thread_frame, text="Default Threads:", 
+                        font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 10))
+            
+            self.thread_var = ctk.StringVar(value=str(self._load_setting('default_threads', 8)))
+            thread_combo = ctk.CTkComboBox(thread_frame,
+                                        values=["1", "2", "4", "8", "12", "16"],
+                                        variable=self.thread_var,
+                                        command=self.change_default_threads,
+                                        width=80)
+            thread_combo.pack(side="left")
+            
+        except Exception as e:
+            print(f"Download tab error: {e}")
+
+    def _create_general_tab(self, parent):
+        """Create general settings tab"""
+        try:
+            # Startup Section
+            startup_frame = ctk.CTkFrame(parent)
+            startup_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(startup_frame, text="Startup", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+            
+            # Start with system
+            self.startup_var = ctk.BooleanVar(value=self._load_setting('start_with_system', False))
+            startup_cb = ctk.CTkCheckBox(startup_frame, 
+                                    text="Start with system (Windows)",
+                                    variable=self.startup_var,
+                                    command=self.toggle_startup)
+            startup_cb.pack(anchor="w", pady=5)
+            
+            # Minimize to tray
+            self.minimize_var = ctk.BooleanVar(value=self._load_setting('minimize_to_tray', False))
+            minimize_cb = ctk.CTkCheckBox(startup_frame, 
+                                        text="Minimize to system tray",
+                                        variable=self.minimize_var,
+                                        command=self.toggle_minimize_tray)
+            minimize_cb.pack(anchor="w", pady=5)
+            
+            # Notifications Section
+            notif_frame = ctk.CTkFrame(parent)
+            notif_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(notif_frame, text="Notifications", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+            
+            # Download complete notifications
+            self.notify_var = ctk.BooleanVar(value=self._load_setting('notify_complete', True))
+            notify_cb = ctk.CTkCheckBox(notif_frame, 
+                                    text="Show notifications when downloads complete",
+                                    variable=self.notify_var,
+                                    command=self.toggle_notifications)
+            notify_cb.pack(anchor="w", pady=5)
+            
+            # Sound notifications
+            self.sound_var = ctk.BooleanVar(value=self._load_setting('sound_notifications', False))
+            sound_cb = ctk.CTkCheckBox(notif_frame, 
+                                    text="Play sound for notifications",
+                                    variable=self.sound_var,
+                                    command=self.toggle_sound)
+            sound_cb.pack(anchor="w", pady=5)
+            
+            # Reset Section
+            reset_frame = ctk.CTkFrame(parent)
+            reset_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(reset_frame, text="Reset & Maintenance", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+            
+            reset_btn_frame = ctk.CTkFrame(reset_frame, fg_color="transparent")
+            reset_btn_frame.pack(fill="x", pady=10)
+            
+            ctk.CTkButton(reset_btn_frame, text="Reset All Settings", 
+                        command=self.reset_settings,
+                        fg_color="orange", hover_color="darkorange",
+                        width=150).pack(side="left", padx=(0, 10))
+            
+            ctk.CTkButton(reset_btn_frame, text="Clear All Data", 
+                        command=self.clear_all_data,
+                        fg_color="red", hover_color="darkred",
+                        width=150).pack(side="left")
+            
+        except Exception as e:
+            print(f"General tab error: {e}")
+
+    def toggle_theme(self):
+        """Toggle between dark and light theme - USING THREADING"""
+        try:
+            current_theme = ctk.get_appearance_mode()
+            new_theme = "Light" if current_theme == "Dark" else "Dark"
+            
+            # Run theme change in a separate thread
+            threading.Thread(target=self._apply_theme_threaded, args=(new_theme,), daemon=True).start()
+            
+        except Exception as e:
+            messagebox.showerror("Theme Error", f"Failed to switch theme: {str(e)}")
+
+    def _apply_theme_threaded(self, new_theme):
+        """Apply theme change in a separate thread"""
+        try:
+            # This might still block, but in a separate thread
+            ctk.set_appearance_mode(new_theme)
+            
+            # Save settings and update UI in main thread
+            self.after(0, lambda: self._finish_theme_change(new_theme))
+            
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Theme Error", f"Failed to apply theme: {str(e)}"))
+
+    def _finish_theme_change(self, new_theme):
+        """Finish theme change in main thread"""
+        try:
+            self._save_setting('theme', new_theme)
+            
+            # Update UI if preferences window is open
+            if hasattr(self, 'current_theme_label'):
+                self.current_theme_label.configure(text=f"Current Theme: {new_theme}")
+            
+            # Show feedback
+            self.status_label.configure(text=f"Theme: {new_theme}", text_color="green")
+            self.after(2000, lambda: self.status_label.configure(text="Idle", text_color="gray"))
+            
+        except Exception as e:
+            messagebox.showerror("Theme Error", f"Failed to save theme: {str(e)}")
+
+    def change_theme(self, choice):
+        """Change theme via dropdown"""
+        threading.Thread(target=self._apply_theme_threaded, args=(choice,), daemon=True).start()
+
+    def change_ui_scale(self, choice):
+        """Change UI scaling (requires restart)"""
+        scale_map = {"80%": 0.8, "90%": 0.9, "100%": 1.0, "110%": 1.1, "120%": 1.2}
+        self._save_setting('ui_scale', scale_map[choice])
+        messagebox.showinfo("Restart Required", "UI scaling change will take effect after restart.")
+
+    def change_download_folder(self):
+        """Change download folder from preferences"""
+        folder = filedialog.askdirectory(initialdir=self.download_folder)
+        if folder:
+            self.download_folder = folder
+            self.folder_path_label.configure(text=folder)
+            self.pref_folder_label.configure(text=folder)
+            self._save_setting('download_folder', folder)
+
+    def toggle_auto_start(self):
+        self._save_setting('auto_start', self.auto_start_var.get())
+
+    def toggle_auto_remove(self):
+        self._save_setting('auto_remove', self.auto_remove_var.get())
+
+    def change_default_threads(self, choice):
+        self._save_setting('default_threads', int(choice))
+
+    def toggle_startup(self):
+        self._save_setting('start_with_system', self.startup_var.get())
+
+    def toggle_minimize_tray(self):
+        self._save_setting('minimize_to_tray', self.minimize_var.get())
+
+    def toggle_notifications(self):
+        self._save_setting('notify_complete', self.notify_var.get())
+
+    def toggle_sound(self):
+        self._save_setting('sound_notifications', self.sound_var.get())
+
+    def reset_settings(self):
+        """Reset all settings to defaults"""
+        if messagebox.askyesno("Confirm Reset", "Reset all settings to default values?"):
+            # Clear settings file
+            config_file = self._get_config_file()
+            if os.path.exists(config_file):
+                os.remove(config_file)
+            messagebox.showinfo("Settings Reset", "All settings have been reset to defaults.")
+
+    def clear_all_data(self):
+        """Clear all application data"""
+        if messagebox.askyesno("Confirm Clear", "Clear ALL data including history and settings?"):
+            config_dir = os.path.dirname(self._get_config_file())
+            if os.path.exists(config_dir):
+                import shutil
+                shutil.rmtree(config_dir)
+            messagebox.showinfo("Data Cleared", "All application data has been cleared.")
+
+
+    def _get_config_file(self):
+        """Get config file path"""
+        config_dir = os.path.expanduser("~/.download_manager")
+        os.makedirs(config_dir, exist_ok=True)
+        return os.path.join(config_dir, "settings.json")
+
+    def _load_settings(self):
+        """Load all settings from file"""
+        try:
+            config_file = self._get_config_file()
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Settings load error: {e}")
+        return {}
+
+    def _load_setting(self, key, default):
+        """Load a specific setting"""
+        settings = self._load_settings()
+        return settings.get(key, default)
+
+    def _save_setting(self, key, value):
+        """Save a setting to file"""
+        try:
+            config_file = self._get_config_file()
+            settings = self._load_settings()
+            settings[key] = value
+            
+            with open(config_file, 'w') as f:
+                json.dump(settings, f, indent=2)
+        except Exception as e:
+            print(f"Settings save error: {e}")
+
+    def load_theme_preference(self):
+        """Load saved theme preference - keep your exisiting method"""
+        try:
+            config_file = self._get_config_file()
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    return config.get('theme', 'Dark')
+        except Exception as e:
+            print(f"Could not load theme preference: {e}")
+        return "Dark"
 
     def _create_download_section(self, parent):
         """Create download controls section"""
@@ -140,14 +568,18 @@ class DownloadManagerUI(ctk.CTk):
             self.resume_btn = ctk.CTkButton(control_frame, text="Resume", 
                                           command=self.resume_download, state="disabled")
             self.resume_btn.pack(side="left", padx=5)
-            
+
+            # History & Statistics Button
+            self.history_btn = ctk.CTkButton(control_frame, text="History & Stats",command=self.show_history_statistics)
+            self.history_btn.pack(side="left", padx=5)
+
+            self.preference_btn = ctk.CTkButton(control_frame, text="⚙ Preferences", 
+                                               command=self.show_preferences, width=100)
+            self.preference_btn.pack(side="left",padx=5)
+
             # Status Section
             self.status_label = ctk.CTkLabel(parent, text="Idle", text_color="gray", font=ctk.CTkFont(size=12))
             self.status_label.pack(anchor="w", pady=5)
-
-            # History & Statistics Button
-            self.history_btn = ctk.CTkButton(control_frame, text="History & Stats",                             command=self.show_history_statistics)
-            self.history_btn.pack(side="left", padx=5)
             
             # Overall Progress
             progress_frame = ctk.CTkFrame(parent)
@@ -448,6 +880,19 @@ class DownloadManagerUI(ctk.CTk):
         """Remove item from queue"""
         try:
             if 0 <= index < len(self.download_queue):
+                item = self.download_queue[index]
+                
+                # ✅ Record cancellation for queued items that are removed
+                if item.status == "Queued":
+                    self.history_manager.add_record(
+                        url=item.url,
+                        filename=item.filename or os.path.basename(item.url),
+                        file_size=0,
+                        status="Cancelled", 
+                        speed=0,
+                        error_msg="Removed from queue before download"
+                    )
+                
                 # If removing current download, cancel it first
                 if self.current_download == self.download_queue[index]:
                     self.cancel_current_download(confirm=False)
@@ -535,14 +980,6 @@ class DownloadManagerUI(ctk.CTk):
     def _run_download_item(self, item):
         """Run the download for a queue item"""
         try:
-            # Record start in history
-            self.history_manager.add_record(
-                url=item.url,
-                filename=item.filename or os.path.basename(item.url),
-                file_size=0,  # Will be updated on completion
-                status="Started",
-                speed=0
-            )
             
             # Create downloader with progress callback
             downloader = FastDownloader(
@@ -846,6 +1283,15 @@ class DownloadManagerUI(ctk.CTk):
                 if confirm and not messagebox.askyesno("Confirm", "Cancel current download?"):
                     return
                 
+                self.history_manager.add_record(
+                    url=self.current_download.url,
+                    filename=self.current_download.filename or os.path.basename(self.current_download.url),
+                    file_size=0,
+                    status="Cancelled",
+                    speed=0,
+                    error_msg="Download cancelled by user"
+                )
+
                 self.current_download.status = "Cancelled"
                 if self.downloader:
                     # We can't easily stop the downloader thread, so we'll mark it as cancelled
