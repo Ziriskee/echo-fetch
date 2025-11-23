@@ -49,8 +49,10 @@ class DownloadManagerUI(ctk.CTk):
             if saved_scale != 1.0:
                 try:
                     ctk.set_widget_scaling(saved_scale)
-                except:
-                    pass
+                    print(f"UI scale set to: {saved_scale}")
+                except Exception as scale_error:
+                    print(f"Failed to set UI scale: {scale_error}")
+                    # Fallback to default scale
 
             self.title("Echo-fetch")
             self.geometry("1100x700")
@@ -69,6 +71,9 @@ class DownloadManagerUI(ctk.CTk):
             
             self._create_widgets()
             self.after(100, self.update_thread_display)
+
+            print(f"Download folder set to: {self.download_folder}")
+
         except Exception as e:
             messagebox.showerror("Initialization Error", f"Failed to initialize application: {str(e)}")
             raise
@@ -208,7 +213,7 @@ class DownloadManagerUI(ctk.CTk):
             current_scale = self._load_setting('ui_scale',1.0)
             scale_percent = f"{int(current_scale * 100)}%"
 
-            scale_var = ctk.StringVar(value="100%")
+            scale_var = ctk.StringVar(value=scale_percent)
             scale_combo = ctk.CTkComboBox(scale_frame,
                                         values=["80%", "90%", "100%", "110%", "120%"],
                                         variable=scale_var,
@@ -405,9 +410,21 @@ class DownloadManagerUI(ctk.CTk):
 
     def change_ui_scale(self, choice):
         """Change UI scaling (requires restart)"""
-        scale_map = {"80%": 0.8, "90%": 0.9, "100%": 1.0, "110%": 1.1, "120%": 1.2}
-        self._save_setting('ui_scale', scale_map[choice])
-        messagebox.showinfo("Restart Required", "UI scaling change will take effect after restart.")
+        try:
+            scale_map = {"80%": 0.8, "90%": 0.9, "100%": 1.0, "110%": 1.1, "120%": 1.2}
+            self._save_setting('ui_scale', scale_map[choice])
+
+            #save the setting
+            self.save_setting('ui_scale',selected_scale)
+
+            if hasattr(self, 'current_scale_label'):
+                self.current_scale_label.configure(text=f"Current Scale: {choice}")
+
+
+            messagebox.showinfo("Restart Required", "UI scaling change will take effect after restart.")
+
+        except Exception as e:
+            messagebox.showerror("Scale Error", f"Failed to change UI scale: {str(e)}")
 
     def change_download_folder(self):
         """Change download folder from preferences"""
@@ -742,11 +759,11 @@ class DownloadManagerUI(ctk.CTk):
         try:
             # Main frame for the queue item
             item_frame = ctk.CTkFrame(self.queue_frame)
-            item_frame.pack(fill="x", pady=3, padx=2)
+            item_frame.pack(fill="x", pady=1, padx=2)
             
             # Left side - File info and status
             left_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
-            left_frame.pack(side="left", fill="both", expand=True, padx=5, pady=3)
+            left_frame.pack(side="left", fill="both", expand=True, padx=3, pady=1)
             
             # Extract filename
             filename = item.filename or os.path.basename(item.url) or "Unknown File"
@@ -760,10 +777,10 @@ class DownloadManagerUI(ctk.CTk):
             filename_label = ctk.CTkLabel(
                 left_frame, 
                 text=display_filename,
-                font=ctk.CTkFont(size=13, weight="bold"),
+                font=ctk.CTkFont(size=12, weight="bold"),
                 anchor="w"
             )
-            filename_label.pack(fill="x", pady=1)
+            filename_label.pack(fill="x", pady=0)
             
             # Status and progress information
             status_text = f"Status: {item.status}"
@@ -794,7 +811,7 @@ class DownloadManagerUI(ctk.CTk):
                 anchor="w",
                 wraplength=250  # Wrap long status text
             )
-            status_label.pack(fill="x", pady=1)
+            status_label.pack(fill="x", pady=0)
             
             # Timestamp information
             timestamp_info = ""
@@ -809,11 +826,11 @@ class DownloadManagerUI(ctk.CTk):
                 time_label = ctk.CTkLabel(
                     left_frame,
                     text=timestamp_info,
-                    font=ctk.CTkFont(size=10),
+                    font=ctk.CTkFont(size=9),
                     text_color="lightgray",
                     anchor="w"
                 )
-                time_label.pack(fill="x", pady=1)
+                time_label.pack(fill="x", pady=0)
             
             # Right side - Action buttons
             btn_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
