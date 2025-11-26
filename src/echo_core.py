@@ -283,6 +283,8 @@ class FastDownloader:
 
 
 if __name__ == "__main__":
-    from System_UI import DownloaderUI
-    app = DownloaderUI()
+    import multiprocessing 
+    multiprocessing.freeze_support()
+    from desktop_echo import DownloadManagerUI
+    app = DownloadManagerUI()
     app.mainloop()

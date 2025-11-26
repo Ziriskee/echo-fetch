@@ -5,6 +5,7 @@ import time
 import tkinter as tk
 import uuid
 from tkinter import filedialog, messagebox
+import sys
 import os
 from echo_core import FastDownloader
 from datetime import datetime
