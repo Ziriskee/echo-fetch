@@ -7,6 +7,8 @@ import uuid
 from tkinter import filedialog, messagebox
 import sys
 import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from echo_core import FastDownloader
 from datetime import datetime
 from download_history import DownloadHistory
@@ -19,7 +21,6 @@ class DownloadItem:
     def __init__(self, url, download_path, filename=None):
         self.url = url
         self.download_path = download_path
-        
         self.filename = filename
         self.status = "Queued"  # Queued, Downloading, Paused, Completed, Error, Cancelled
         self.progress = 0
@@ -46,6 +47,10 @@ class DownloadManagerUI(ctk.CTk):
             # Apply saved download folder
             self.download_folder = settings.get('download_folder', os.path.expanduser("~/Downloads"))
     
+            # 🔥 INITIALIZE DUPLICATE CHECK SETTINGS 🔥
+            self.skip_duplicates_var = tk.BooleanVar(value=settings.get('skip_duplicates', False))
+            self.auto_rename_var = tk.BooleanVar(value=settings.get('auto_rename', False))
+
             saved_scale = settings.get('ui_scale',1.0)
             if saved_scale != 1.0:
                 try:
@@ -135,6 +140,112 @@ class DownloadManagerUI(ctk.CTk):
             self._create_queue_section(right_frame)
         except Exception as e:
             messagebox.showerror("UI Error", f"Failed to create widgets: {str(e)}")
+
+    def cleanup_downloaded_files(self):
+        """Cleanup downloaded files with selective options"""
+        try:
+            # Get completed downloads from history
+            completed_downloads = [
+                record for record in self.history_manager.history 
+                if record['status'] == 'Completed'
+            ]
+            
+            if not completed_downloads:
+                messagebox.showinfo("No Files", "No completed downloads found in history")
+                return
+            
+            # Create a selection window for file cleanup
+            cleanup_window = ctk.CTkToplevel(self)
+            cleanup_window.title("Cleanup Downloaded Files")
+            cleanup_window.geometry("600x400")
+            cleanup_window.transient(self)
+            cleanup_window.grab_set()
+            
+            ctk.CTkLabel(cleanup_window, text="Select files to delete:",
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
+            
+            # Scrollable frame for file list
+            files_frame = ctk.CTkScrollableFrame(cleanup_window)
+            files_frame.pack(fill="both", expand=True, padx=20, pady=10)
+            
+            file_vars = {}
+            
+            for record in completed_downloads:
+                filename = record.get('filename', 'Unknown')
+                filepath = os.path.join(self.download_folder, filename)
+                file_exists = os.path.exists(filepath)
+                
+                file_frame = ctk.CTkFrame(files_frame)
+                file_frame.pack(fill="x", pady=2)
+                
+                var = ctk.BooleanVar(value=True)
+                file_vars[filename] = var
+                
+                cb = ctk.CTkCheckBox(file_frame, text="", variable=var, width=20)
+                cb.pack(side="left", padx=5)
+                
+                file_text = f"{filename}"
+                if not file_exists:
+                    file_text += " (File not found)"
+                
+                file_label = ctk.CTkLabel(file_frame, text=file_text, anchor="w")
+                file_label.pack(side="left", fill="x", expand=True)
+                
+                if not file_exists:
+                    file_label.configure(text_color="gray")
+            
+            # Action buttons
+            btn_frame = ctk.CTkFrame(cleanup_window)
+            btn_frame.pack(fill="x", padx=20, pady=10)
+            
+            ctk.CTkButton(btn_frame, text="Select All", 
+                         command=lambda: self._select_all_files(file_vars, True)).pack(side="left", padx=5)
+            
+            ctk.CTkButton(btn_frame, text="Deselect All", 
+                         command=lambda: self._select_all_files(file_vars, False)).pack(side="left", padx=5)
+            
+            ctk.CTkButton(btn_frame, text="Delete Selected", 
+                         command=lambda: self._delete_selected_files(file_vars, cleanup_window),
+                         fg_color="red", hover_color="darkred").pack(side="right", padx=5)
+            
+        except Exception as e:
+            messagebox.showerror("Cleanup Error", f"Failed to open cleanup window: {str(e)}")
+    
+    def _select_all_files(self, file_vars, select):
+        """Select or deselect all files in cleanup window"""
+        for var in file_vars.values():
+            var.set(select)
+    
+    def _delete_selected_files(self, file_vars, window):
+        """Delete selected files from cleanup window"""
+        try:
+            selected_files = [filename for filename, var in file_vars.items() if var.get()]
+            
+            if not selected_files:
+                messagebox.showwarning("No Selection", "No files selected for deletion")
+                return
+            
+            confirm = messagebox.askyesno(
+                "Confirm Deletion",
+                f"Are you sure you want to delete {len(selected_files)} file(s)?\n\n"
+                "This action cannot be undone!"
+            )
+            
+            if not confirm:
+                return
+            
+            deleted_count = 0
+            for filename in selected_files:
+                filepath = os.path.join(self.download_folder, filename)
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                    deleted_count += 1
+            
+            messagebox.showinfo("Deletion Complete", f"Successfully deleted {deleted_count} file(s)")
+            window.destroy()
+            
+        except Exception as e:
+            messagebox.showerror("Deletion Error", f"Failed to delete files: {str(e)}")
 
     def show_preferences(self):
         """Show preferences/settings window"""
@@ -289,9 +400,38 @@ class DownloadManagerUI(ctk.CTk):
                                         command=self.change_default_threads,
                                         width=80)
             thread_combo.pack(side="left")
+
+            # Duplicate Check Section
+            duplicate_frame = ctk.CTkFrame(parent)
+            duplicate_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(duplicate_frame, text="Duplicate File Handling", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+            
+            # Auto-rename duplicates
+            self.auto_rename_var = ctk.BooleanVar(value=self._load_setting('auto_rename', False))
+            auto_rename_cb = ctk.CTkCheckBox(duplicate_frame, 
+                                            text="Auto-rename duplicate files (no prompt)",
+                                            variable=self.auto_rename_var,
+                                            command=self.toggle_auto_rename)
+            auto_rename_cb.pack(anchor="w", pady=5)
+            
+            # Skip duplicates
+            self.skip_duplicates_var = ctk.BooleanVar(value=self._load_setting('skip_duplicates', False))
+            skip_duplicates_cb = ctk.CTkCheckBox(duplicate_frame, 
+                                                text="Auto-skip duplicate files",
+                                                variable=self.skip_duplicates_var,
+                                                command=self.toggle_skip_duplicates)
+            skip_duplicates_cb.pack(anchor="w", pady=5)
             
         except Exception as e:
             print(f"Download tab error: {e}")
+
+    def toggle_auto_rename(self):
+        self._save_setting('auto_rename', self.auto_rename_var.get())
+    
+    def toggle_skip_duplicates(self):
+        self._save_setting('skip_duplicates', self.skip_duplicates_var.get())
 
     def _create_general_tab(self, parent):
         """Create general settings tab"""
@@ -467,14 +607,50 @@ class DownloadManagerUI(ctk.CTk):
             messagebox.showinfo("Settings Reset", "All settings have been reset to defaults.")
 
     def clear_all_data(self):
-        """Clear all application data"""
-        if messagebox.askyesno("Confirm Clear", "Clear ALL data including history and settings?"):
-            config_dir = os.path.dirname(self._get_config_file())
-            if os.path.exists(config_dir):
-                import shutil
-                shutil.rmtree(config_dir)
-            messagebox.showinfo("Data Cleared", "All application data has been cleared.")
-
+        """Clear all application data including downloaded files"""
+        try:
+            # Count downloaded files
+            completed_downloads = [
+                record for record in self.history_manager.history 
+                if record['status'] == 'Completed'
+            ]
+            file_count = len(completed_downloads)
+            
+            response = messagebox.askyesno(
+                "Confirm Clear ALL Data",
+                f"This will delete:\n\n"
+                f"• All download history ({len(self.history_manager.history)} records)\n"
+                f"• All application settings\n"
+                f"• All downloaded files ({file_count} files)\n\n"
+                f"This action cannot be undone!\n\n"
+                f"Are you absolutely sure?"
+            )
+            
+            if response:
+                # Delete downloaded files first
+                deleted_files = 0
+                for record in completed_downloads:
+                    filename = record.get('filename')
+                    if filename:
+                        filepath = os.path.join(self.download_folder, filename)
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+                            deleted_files += 1
+                
+                # Clear all data
+                config_dir = os.path.dirname(self._get_config_file())
+                if os.path.exists(config_dir):
+                    import shutil
+                    shutil.rmtree(config_dir)
+                
+                messagebox.showinfo(
+                    "Data Cleared", 
+                    f"All application data has been cleared.\n"
+                    f"Deleted {deleted_files} downloaded files."
+                )
+                
+        except Exception as e:
+            messagebox.showerror("Clear Error", f"Failed to clear data: {str(e)}")
 
     def _get_config_file(self):
         """Get config file path"""
@@ -587,6 +763,12 @@ class DownloadManagerUI(ctk.CTk):
                                           command=self.resume_download, state="disabled")
             self.resume_btn.pack(side="left", padx=5)
 
+            self.cancel_btn = ctk.CTkButton(control_frame, text="Cancel", 
+                                                  command=self.cancel_current_download, 
+                                                  fg_color="red", hover_color="darkred",
+                                                  state="disabled")
+            self.cancel_btn.pack(side="left", padx=5)
+
             # History & Statistics Button
             self.history_btn = ctk.CTkButton(control_frame, text="History & Stats",command=self.show_history_statistics)
             self.history_btn.pack(side="left", padx=5)
@@ -653,7 +835,7 @@ class DownloadManagerUI(ctk.CTk):
             # Queue list with proper height
             ctk.CTkLabel(parent, text="Downloads:", font=ctk.CTkFont(size=14)).pack(anchor="w", padx=10, pady=(5, 0))
             
-            self.queue_frame = ctk.CTkScrollableFrame(parent, height=400)  # Increased height
+            self.queue_frame = ctk.CTkScrollableFrame(parent, height=300)  # Increased height
             self.queue_frame.pack(fill="both", expand=True, padx=10, pady=10)
             
             self.queue_item_frames = []
@@ -692,15 +874,35 @@ class DownloadManagerUI(ctk.CTk):
                 messagebox.showwarning("Invalid URL", "Please enter a valid HTTP/HTTPS URL")
                 return
             
-            download_item = DownloadItem(url, self.download_folder)
+            # 🔥 CHECK FOR DUPLICATE WHEN ADDING TO QUEUE 🔥
+            filename = os.path.basename(url) or "downloaded_file"
+            duplicate_action = self.check_duplicate_file(filename, url)
+            
+            if duplicate_action == "skip":
+                messagebox.showinfo("Skipped", f"Skipped duplicate file: {filename}")
+                return
+            elif duplicate_action == "rename":
+                filename = self.generate_unique_filename(filename)
+            
+          # 🔥 ADD DEBUG INFO TO TRACK THE ISSUE 🔥
+            print("=== BEFORE ADDING TO QUEUE ===")
+            self.debug_queue_state()
+            
+            download_item = DownloadItem(url, self.download_folder, filename)
             self.download_queue.append(download_item)
+            
+            print("=== AFTER ADDING TO QUEUE ===")
+            self.debug_queue_state()
+            
+            # Single update call
             self._update_queue_display()
             
             self.url_entry.delete(0, 'end')
             messagebox.showinfo("Success", f"Added to queue: {url}")
+            
         except Exception as e:
-            messagebox.showerror("Queue Error", f"Failed to add URL to queue: {str(e)}")
-
+            messagebox.showerror("Queue Error", f"Failed to add URL to queue: {str(e)}")   
+            
     def add_batch_to_queue(self):
         """Add multiple URLs from text box to queue"""
         try:
@@ -715,6 +917,17 @@ class DownloadManagerUI(ctk.CTk):
             
             for url in urls:
                 if url and url.startswith(('http://', 'https://')):
+
+                    # 🔥 CHECK FOR DUPLICATE FOR EACH URL 🔥
+                    filename = os.path.basename(url) or "downloaded_file"
+                    duplicate_action = self.check_duplicate_file(filename, url)
+                    
+                    if duplicate_action == "skip":
+                        skipped_duplicates.append(url)
+                        continue
+                    elif duplicate_action == "rename":
+                        filename = self.generate_unique_filename(filename)
+
                     download_item = DownloadItem(url, self.download_folder)
                     self.download_queue.append(download_item)
                     added_count += 1
@@ -737,10 +950,26 @@ class DownloadManagerUI(ctk.CTk):
     def _update_queue_display(self):
         """Update the queue display without blinking"""
         try:
+
+            if hasattr(self, '_updating_queue') and self._updating_queue:
+                return
+            self._updating_queue = True
+
             # Always refresh rather than recreate to prevent flickering
             self._refresh_queue_display()
+
         except Exception as e:
             print(f"Queue display update error: {e}")
+        finally:
+            self._updating_queue = False
+
+    def debug_queue_state(self):
+        """Debug method to check queue state"""
+        print(f"=== QUEUE DEBUG ===")
+        print(f"Queue length: {len(self.download_queue)}")
+        for i, item in enumerate(self.download_queue):
+            print(f"  {i}: {item.url} | {item.status}")
+        print(f"===================")
 
     def _refresh_queue_display(self):
         """Update existing queue items without recreating"""
@@ -752,6 +981,7 @@ class DownloadManagerUI(ctk.CTk):
             # Create new queue items with proper sizing
             for i, item in enumerate(self.download_queue):
                 self._create_queue_item(i, item)
+
         except Exception as e:
             print(f"Queue refresh error: {e}")
 
@@ -760,7 +990,7 @@ class DownloadManagerUI(ctk.CTk):
         try:
             # Main frame for the queue item
             item_frame = ctk.CTkFrame(self.queue_frame)
-            item_frame.pack(fill="x", pady=1, padx=2)
+            item_frame.pack(fill="x", pady=1, padx=1)
             
             # Left side - File info and status
             left_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
@@ -987,6 +1217,7 @@ class DownloadManagerUI(ctk.CTk):
             self.pause_btn.configure(state="normal")
             self.resume_btn.configure(state="disabled")
             self.start_btn.configure(state="disabled")
+            self.cancel_btn.configure(state="normal")
             
             self._update_queue_display()
             
@@ -998,12 +1229,13 @@ class DownloadManagerUI(ctk.CTk):
     def _run_download_item(self, item):
         """Run the download for a queue item"""
         try:
-            
+
             # Create downloader with progress callback
             downloader = FastDownloader(
                 item.url,
                 num_threads=8,
-                progress_callback=lambda idx, speed, percent: self.progress_queue.put((idx, speed, percent))
+                progress_callback=lambda idx, speed, percent: self.progress_queue.put((idx, speed, percent)),
+                download_path=item.download_path
             )
             
             item.downloader = downloader
@@ -1052,6 +1284,45 @@ class DownloadManagerUI(ctk.CTk):
         finally:
             # Move to next item or finish
             self.after(0, self._download_item_finished)
+
+    def check_duplicate_file(self, filename, url=None):
+        """Check if file already exists in download folder with settings"""
+        try:
+            filepath = os.path.join(self.download_folder, filename)
+            
+            if not os.path.exists(filepath):
+                return "proceed"
+            
+            # Use settings directly (avoids UI variable issues)
+            skip_duplicates = self._load_setting('skip_duplicates', False)
+            auto_rename = self._load_setting('auto_rename', False)
+            
+            # Check settings for automatic behavior
+            if skip_duplicates:
+                return "skip"
+            elif auto_rename:
+                return "rename"
+            
+            # Manual prompt
+            response = messagebox.askyesnocancel(
+                "Duplicate File Found", 
+                f"File '{filename}' already exists.\n\n"
+                f"What would you like to do?\n\n"
+                f"• Yes: Rename new file\n"
+                f"• No: Overwrite existing file\n"
+                f"• Cancel: Skip this download"
+            )
+            
+            if response is None:  # Cancel
+                return "skip"
+            elif response:  # Yes - Rename
+                return "rename"
+            else:  # No - Overwrite
+                return "overwrite"
+            
+        except Exception as e:
+            print(f"Duplicate check error: {e}")
+            return "proceed"
 
     def show_history_statistics(self):
         """Show download history and statistics window"""
@@ -1193,6 +1464,11 @@ class DownloadManagerUI(ctk.CTk):
                     command=self.export_history_csv,
                     width=200).pack(pady=10)
         
+        ctk.CTkButton(export_frame, text="🗑️ Cleanup Downloaded Files", 
+                         command=self.cleanup_downloaded_files,
+                         fg_color="orange", hover_color="darkorange",
+                         width=200).pack(pady=5)
+
         ctk.CTkButton(export_frame, text="Clear History", 
                     command=self.clear_history,
                     fg_color="red", hover_color="darkred",
@@ -1220,10 +1496,51 @@ class DownloadManagerUI(ctk.CTk):
             messagebox.showerror("Export Error", f"Export failed: {str(e)}")
 
     def clear_history(self):
-        """Clear all download history"""
-        if messagebox.askyesno("Confirm Clear", "Clear all download history? This cannot be undone."):
-            self.history_manager.clear_history()
-            messagebox.showinfo("History Cleared", "Download history has been cleared")
+        """Clear download history with file cleanup options"""
+        try:
+            response = messagebox.askyesnocancel(
+                "Clear History Options",
+                "What would you like to clear?\n\n"
+                "• Yes: Clear history records only (keep files)\n"
+                "• No: Clear history AND delete downloaded files\n"
+                "• Cancel: Do nothing"
+            )
+            
+            if response is None:  # Cancel
+                return
+            elif response:  # Yes - Clear history only
+                self.history_manager.clear_history()
+                messagebox.showinfo("History Cleared", "Download history has been cleared")
+            else:  # No - Clear history AND delete files
+                deleted_count = self.delete_downloaded_files()
+                self.history_manager.clear_history()
+                messagebox.showinfo("History Cleared", 
+                                    f"Download history cleared and {deleted_count} files deleted")
+                
+        except Exception as e:
+            messagebox.showerror("Clear Error", f"Failed to clear history: {str(e)}")
+
+    def delete_downloaded_files(self):
+        """Delete all downloaded files from history"""
+        try:
+            deleted_count = 0
+            history_records = self.history_manager.get_recent_downloads(limit=1000)  # Get all records
+            
+            for record in history_records:
+                if record['status'] == 'Completed':
+                    filename = record.get('filename')
+                    if filename:
+                        filepath = os.path.join(self.download_folder, filename)
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+                            deleted_count += 1
+                            print(f"Deleted: {filename}")
+            
+            return deleted_count
+            
+        except Exception as e:
+            print(f"File deletion error: {e}")
+            return 0   
 
     def _download_item_finished(self):
         """Handle completion of a download item"""
@@ -1237,7 +1554,8 @@ class DownloadManagerUI(ctk.CTk):
             self.pause_btn.configure(state="disabled")
             self.resume_btn.configure(state="disabled")
             self.start_btn.configure(state="normal")
-            
+            self.cancel_btn.configure(state="disabled")
+
             # Start next download if available
             self.after(1000, self._start_next_download)
         except Exception as e:

@@ -9,15 +9,16 @@ MAX_RETRIES = 10
 RETRY_DELAY = 2  # seconds
 
 def sanitize_filename(url):
-    filename = url.split("/")[-1]
-    filename = filename.split("?")[0]
-    filename = re.sub(r'[\\/*?:"<>|]', "_", filename)
-    return filename if filename else "downloaded_file"
+        filename = url.split("/")[-1]
+        filename = filename.split("?")[0]
+        filename = re.sub(r'[\\/*?:"<>|]', "_", filename)
+        return filename if filename else "downloaded_file"
 
 class FastDownloader:
-    def __init__(self, url, num_threads=8, progress_callback=None):
+    def __init__(self, url, num_threads=8, progress_callback=None, download_path=None):
         self.url = url
         self.callback = progress_callback
+        self.download_path = download_path or os.getcwd()
         
         try:
             # Get file size with error handling
@@ -27,6 +28,9 @@ class FastDownloader:
             self.file_size = int(response.headers.get("Content-Length", 0))
             self.filename = sanitize_filename(url)
             
+            if self.download_path:
+                os.makedirs(self.download_path, exist_ok=True)
+
             # FIXED: Use the provided num_threads, only override if file is small
             if self.file_size > 0:
                 self.num_threads = self.choose_optimal_threads(self.file_size, num_threads)
@@ -69,6 +73,8 @@ class FastDownloader:
             self.thread_speed = [0]
             self.paused = False
 
+    
+
     def choose_optimal_threads(self, file_size_bytes, default_threads):
         """Choose optimal thread count based on file size and system capabilities"""
         if file_size_bytes == 0:
@@ -96,7 +102,13 @@ class FastDownloader:
         return min(suggested_threads, default_threads)
 
     def download_part(self, start, end, part_index):
-        part_file = f"{self.filename}.part{part_index}"
+
+        if self.download_path:
+            part_file = os.path.join(self.download_path, f"{self.filename}.part{part_index}")
+        
+        else:
+            part_file = f"{self.filename}.part{part_index}"
+
         downloaded = 0
         retries = 0
         
@@ -174,7 +186,13 @@ class FastDownloader:
 
     def merge_parts(self):
         print("\n🔗 Merging downloaded parts...")
-        temp_output = self.filename + ".temp"
+
+        if self.download_path:
+            temp_output = os.path.join(self.download_path, self.filename + ".temp")
+            final_output = os.path.join(self.download_path, self.filename)
+        else:
+            temp_output = self.filename + ".temp"
+            final_output = self.filename
         
         try:
             with open(temp_output, "wb") as final_file:
@@ -203,6 +221,12 @@ class FastDownloader:
     def download_single_thread(self):
         print("\n⚡ Downloading in single-thread mode...")
         
+        # use the correct download path for single-thread downloads
+        if self.download_path:
+            output_file = os.path.join(self.download_path, self.filename)
+        else:
+            output_file = self.filename
+
         try:
             with requests.get(self.url, stream=True, timeout=30) as r:
                 r.raise_for_status()
