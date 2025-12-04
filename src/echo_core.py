@@ -19,13 +19,50 @@ class FastDownloader:
         self.url = url
         self.callback = progress_callback
         self.download_path = download_path or os.getcwd()
+        self.exceptions = [] # To track exceptions from threads
+
+        # Convert to absolute path for consistency
+        if self.download_path:
+            self.download_path = os.path.abspath(self.download_path)
+            print(f"📂 Download path set to: {self.download_path}")
         
+        
+        # ✅ BETTER HEADERS TO MIMIC A REAL BROWSER
+        self.headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
+                
+        # Create a session to maintain cookies
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+
         try:
             # Get file size with error handling
             response = requests.head(url, allow_redirects=True, timeout=10)
-            response.raise_for_status()
             
-            self.file_size = int(response.headers.get("Content-Length", 0))
+            # ✅ HANDLE 403 ERRORS DURING HEAD REQUEST
+            if response.status_code == 403:
+                print("⚠ Server blocked HEAD request with 403 Forbidden, trying GET request for file size...")
+                response = self.session.get(url, stream=True, timeout=10, headers={'Range': 'bytes=0-0'})
+
+
+                #try with GET instead for servers that block HEAD requests
+                response = self.session.get(url, stream=True, timeout=10, headers={'Range': 'bytes=0-0'})
+
+                if response.status_code in (200, 206):
+                    self.file_size = int(response.headers.get("Content-Length", 0))
+                else:
+                    raise Exception(f"Server returned {response.status_code}: {response.reason}")
+            else:
+                response.raise_for_status()
+                self.file_size = int(response.headers.get("Content-Length", 0))
+            
+            
             self.filename = sanitize_filename(url)
             
             if self.download_path:
@@ -46,15 +83,12 @@ class FastDownloader:
             self.range_supported = response.headers.get("Accept-Ranges", "") == "bytes"
             
             if not self.range_supported and self.file_size > 0:
-                print("⚠ Server did not return Accept-Ranges header.")
-                print("→ Trying fallback range test...")
-                test = requests.get(url, headers={"Range": "bytes=0-0"}, timeout=10)
+                self.log("Testing if server supports range requests...","info")
+                test = self.session.get(url, headers ={ "Range": "bytes=0-0"}, timeout = 10)
+
                 self.range_supported = test.status_code == 206
-                if self.range_supported:
-                    print("✅ Server *does* support range (confirmed via test).")
-                else:
-                    print("❌ No multi-part support. Will download single-thread.")
-                    self.num_threads = 1
+                if not self.range_supported:
+                    self.num_threads =1 
             
             # Calculate part size only if range is supported and file has size
             if self.range_supported and self.file_size > 0:
@@ -63,7 +97,23 @@ class FastDownloader:
                 self.num_threads = 1
                 
         except requests.RequestException as e:
-            print(f"❌ Error connecting to server: {e}")
+            self.log(f"Error connecting to server: {e}","error")
+
+            # Try one more time with GET
+            try:
+                self.log("Trying alternative connection method...","info")
+                response = self.session.get(url, stream=True, timeout=10)
+                if response.status_code == 200:
+                    self.file_size = self.extract_file_size(response)
+                    self.filename = sanitize_filename(url)
+                    self.num_threads = 1
+                    self.range_supported = False
+                    self.thread_progress = [0]
+                    self.thread_speed = [0]
+                    self.paused = False
+                    return
+            except:
+                pass
             # Set safe defaults
             self.file_size = 0
             self.num_threads = 1
@@ -73,7 +123,32 @@ class FastDownloader:
             self.thread_speed = [0]
             self.paused = False
 
-    
+    def _extract_file_size(self, response):
+            """Extract file size from response headers"""
+            size = response.headers.get("Content-Length")
+            if size:
+                return int(size)
+            
+            range_header = response.headers.get("Content-Range")
+            if range_header and "/" in range_header:
+                total = range_header.split("/")[-1]
+                if total != "*":
+                    return int(total)
+            
+            return 0
+        
+    def get_final_filepath(self):
+            """Get the actual path where the file was saved"""
+            if self.download_path:
+                return os.path.join(self.download_path, self.filename)
+            else:
+                return self.filename
+
+    def log(self, message, level="info"):
+        """Log messages (can be displayed in UI)"""
+        self.messages.append(f"[{level.upper()}] {message}")
+        if level in ["error", "warning"]:
+            print(f"{'❌' if level == 'error' else '⚠'} {message}")
 
     def choose_optimal_threads(self, file_size_bytes, default_threads):
         """Choose optimal thread count based on file size and system capabilities"""
@@ -102,7 +177,7 @@ class FastDownloader:
         return min(suggested_threads, default_threads)
 
     def download_part(self, start, end, part_index):
-
+        # ✅ FIX: Use self.download_path consistently
         if self.download_path:
             part_file = os.path.join(self.download_path, f"{self.filename}.part{part_index}")
         
@@ -128,14 +203,17 @@ class FastDownloader:
                 range_start = start + downloaded
                 headers = {"Range": f"bytes={range_start}-{end}"}
                 
-                with requests.get(self.url, headers=headers, stream=True, timeout=30) as r:
+                with self.session.get(self.url, headers=headers, stream=True, timeout=30) as r:
+                    if r.status_code == 403:
+                        raise Exception("Server blocked download (403 Forbidden)")
+
                     r.raise_for_status()
                     
                     with open(part_file, "ab") as f:
                         last_time = time.time()
                         last_downloaded = downloaded
                         
-                        for chunk in r.iter_content(chunk_size=1024 * 32):
+                        for chunk in r.iter_content(chunk_size=1024 * 16):
                             # Handle pause
                             while self.paused:
                                 time.sleep(0.1)
@@ -171,7 +249,14 @@ class FastDownloader:
             except Exception as e:
                 retries += 1
                 if retries >= MAX_RETRIES:
-                    print(f"❌ Thread {part_index+1} failed after {MAX_RETRIES} retries: {e}")
+                    error_type = type(e).__name__
+                    print(f"❌ Thread {part_index+1} failed after {MAX_RETRIES} retries:")
+                    print(f"   Error Type: {error_type}")
+                    print(f"   Error Message: {e}")
+                    print(f"   Download URL: {self.url}")
+                    print(f"   Range: {range_start}-{end}")
+                    # Record the exception to raise later
+                    self.exceptions.append(e)
                     return
                 print(f"⚠ Thread {part_index+1} error, retry {retries}/{MAX_RETRIES}: {e}")
                 time.sleep(RETRY_DELAY)
@@ -190,32 +275,72 @@ class FastDownloader:
         if self.download_path:
             temp_output = os.path.join(self.download_path, self.filename + ".temp")
             final_output = os.path.join(self.download_path, self.filename)
+
+            # Ensure download path exists
+            os.makedirs(self.download_path, exist_ok=True)
         else:
             temp_output = self.filename + ".temp"
             final_output = self.filename
         
+        print(f"→ Merging into: {final_output}")
+        
         try:
             with open(temp_output, "wb") as final_file:
                 for i in range(self.num_threads):
-                    part_file = f"{self.filename}.part{i}"
-                    
+                    if self.download_path:
+                        part_file = os.path.join(self.download_path, f"{self.filename}.part{i}")
+                    else:
+                        part_file = f"{self.filename}.part{i}"
+
                     if not os.path.exists(part_file):
                         print(f"❌ Missing part: {part_file}. Merge aborted.")
-                        return False
                         
+                        if self.download_path:
+                            alt_part_file = f"{self.filename}.part{i}"
+                            if os.path.exists(alt_part_file):
+                                print(f"→ Found part in current directory: {alt_part_file}")
+                                part_file = alt_part_file
+                            else:
+                                return False
+                        else:
+                            return False
+                        
+                    print(f"📄 Adding part {i}: {part_file}")    
                     with open(part_file, "rb") as pf:
                         final_file.write(pf.read())
                     os.remove(part_file)
             
-            # Replace old file if exists
-            if os.path.exists(self.filename):
-                os.remove(self.filename)
-            os.rename(temp_output, self.filename)
-            print("✅ Merge complete!")
-            return True
+            # ✅ FIX: Check if final file exists at correct path
+            if os.path.exists(final_output):
+                print(f"❌ Replacing existing file: {final_output}")
+                os.remove(final_output)
+
+            # use correct path for rename
+            os.rename(temp_output, final_output)
+
+            #
+            if os.path.exists(final_output):
+                final_size = os.path.getsize(final_output)
+                print(f"✅ Merge complete! Final size: {final_size} bytes")
+
+                # Also clean up temp file if it still exists
+                if os.path.exists(temp_output):
+                    os.remove(temp_output)
+
+                return True
+            else:
+                print(f"❌ Merge failed: {final_output} not created")
+                return False
             
         except Exception as e:
             print(f"❌ Error during merge: {e}")
+
+            # Clean up on error
+            if os.path.exists(temp_output):
+                try:
+                    os.remove(temp_output)
+                except:
+                    pass
             return False
 
     def download_single_thread(self):
@@ -228,7 +353,11 @@ class FastDownloader:
             output_file = self.filename
 
         try:
-            with requests.get(self.url, stream=True, timeout=30) as r:
+            with self.session.get(self.url, stream=True, timeout=30) as r:
+                # Handle 403 errors
+                if r.status_code == 403:
+                    raise Exception("Server blocked download (403 Forbidden)")
+
                 r.raise_for_status()
                 
                 # Get total size from headers if not already known
@@ -270,40 +399,61 @@ class FastDownloader:
     def start(self):
         print(f"🚀 Starting download: {self.filename}")
         print(f"📁 File size: {self.file_size} bytes")
+        print(f"📁 Download path: {self.download_path}")
         print(f"🧵 Using {self.num_threads} thread(s)")
-        
-        if not self.range_supported or self.file_size == 0:
-            self.download_single_thread()
-        else:
-            threads = []
-            for i in range(self.num_threads):
-                start = i * self.part_size
-                if i == self.num_threads - 1:
-                    end = self.file_size - 1
-                else:
-                    end = start + self.part_size - 1
-                    
-                t = threading.Thread(target=self.download_part, args=(start, end, i))
-                threads.append(t)
-                t.daemon = True
-                t.start()
+        try:
+            if not self.range_supported or self.file_size == 0:
+                self.download_single_thread()
+            else:
+                threads = []
+                for i in range(self.num_threads):
+                    start = i * self.part_size
+                    if i == self.num_threads - 1:
+                        end = self.file_size - 1
+                    else:
+                        end = start + self.part_size - 1
+                        
+                    t = threading.Thread(target=self.download_part, args=(start, end, i))
 
-            # Wait for all threads to complete
-            for t in threads:
-                t.join()
+                    threads.append(t)
+                    t.daemon = True
+                    t.start()
 
-            # Merge parts if multi-threaded download
-            if self.num_threads > 1:
-                if self.merge_parts():
-                    # Verify download size
-                    if os.path.exists(self.filename):
-                        final_size = os.path.getsize(self.filename)
-                        if self.file_size > 0 and final_size != self.file_size:
-                            print(f"❌ Size mismatch! Expected: {self.file_size}, Got: {final_size}")
-                            print("→ Re-downloading in single-thread mode...")
-                            self.download_single_thread()
-        
-        print(f"✅ Download complete: {self.filename}")
+                # Wait for all threads to complete
+                for t in threads:
+                    t.join()
+
+                if hasattr(self, 'exceptions') and self.exceptions:
+                    print(f"❌ Download failed with {len(self.exceptions)} error(s)")
+                    raise self.exceptions[0] # Raise the first exception
+
+                # Merge parts if multi-threaded download
+                if self.num_threads > 1:
+                    if self.merge_parts():
+                        final_path = os.path.join(self.download_path, self.filename) if self.download_path else self.filename
+                        
+                        # Verify download size
+                        if os.path.exists(self.filename):
+                            final_size = os.path.getsize(self.filename)
+                            if self.file_size > 0 and final_size != self.file_size:
+                                print(f"❌ Size mismatch! Expected: {self.file_size}, Got: {final_size}")
+                                print("→ Re-downloading in single-thread mode...")
+                                self.download_single_thread()
+                        else:
+                            print(f"❌ Final file not found after merge: {final_path}")
+                            raise Exception(f"Final file not created at {final_path}")
+                    else:
+                        raise Exception("Merging parts failed")
+            print(f"✅ Download complete: {self.filename}")
+            if self.download_path:
+                print(f"✅ File saved to: {os.path.join(self.download_path, self.filename)}")
+
+            else:
+                print(f"✅ File saved to: {self.filename}")
+
+        except Exception as e:
+            print(f"❌ Download failed: {e}")
+            raise #re-raise the exception to be caught by the ui
 
 
 if __name__ == "__main__":

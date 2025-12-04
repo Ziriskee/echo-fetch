@@ -61,7 +61,7 @@ class DownloadManagerUI(ctk.CTk):
                     # Fallback to default scale
 
             self.title("Echo-fetch")
-            self.geometry("1100x700")
+            self.geometry("1250x740")
                         
 
             # Initialize data structures
@@ -725,10 +725,6 @@ class DownloadManagerUI(ctk.CTk):
             self.url_entry.bind("<Return>", lambda e: self.add_to_queue())
             
             # Right-click menu for URL entry
-            self.menu = tk.Menu(self, tearoff=0)
-            self.menu.add_command(label="Cut", command=lambda: self.url_entry.event_generate("<<Cut>>"))
-            self.menu.add_command(label="Copy", command=lambda: self.url_entry.event_generate("<<Copy>>"))
-            self.menu.add_command(label="Paste", command=lambda: self.url_entry.event_generate("<<Paste>>"))
             self.url_entry.bind("<Button-3>", self.show_menu)
             
             # Batch download section
@@ -739,6 +735,9 @@ class DownloadManagerUI(ctk.CTk):
             
             self.batch_text = ctk.CTkTextbox(batch_frame, height=100, font=ctk.CTkFont(size=12))
             self.batch_text.pack(fill="x", pady=5)
+
+            # Right-click menu for batch text
+            self.batch_text.bind("<Button-3>", self.show_menu)
             
             ctk.CTkButton(batch_frame, text="Add All to Queue", 
                          command=self.add_batch_to_queue).pack(pady=5)
@@ -844,13 +843,44 @@ class DownloadManagerUI(ctk.CTk):
             messagebox.showerror("UI Error", f"Failed to create queue section: {str(e)}")
 
     def show_menu(self, event):
-        """Show right-click context menu"""
+        """Show right-click context menu for text widgets"""
         try:
-            self.menu.tk_popup(event.x_root, event.y_root)
+            # Get the widget that was clicked
+            widget = event.widget
+            
+            # Create menu
+            menu = tk.Menu(self, tearoff=0)
+            
+            # Cut, Copy, Paste work the same way
+            menu.add_command(label="Cut", 
+                            command=lambda: widget.event_generate("<<Cut>>"))
+            menu.add_command(label="Copy", 
+                            command=lambda: widget.event_generate("<<Copy>>"))
+            menu.add_command(label="Paste", 
+                            command=lambda: widget.event_generate("<<Paste>>"))
+            menu.add_separator()
+            
+            # Select All works differently
+            menu.add_command(label="Select All", 
+                            command=lambda: self._select_all_in_widget(widget))
+            
+            menu.tk_popup(event.x_root, event.y_root)
+            
         except Exception as e:
             print(f"Menu error: {e}")
         finally:
-            self.menu.grab_release()
+            try:
+                menu.grab_release()
+            except:
+                pass
+
+    def _select_all_in_widget(self, widget):
+        """Handle Select All for different widget types"""
+        if widget == self.url_entry:
+            widget.select_range(0, 'end')  # For CTkEntry
+        elif widget == self.batch_text:
+            # For CTkTextbox, use the underlying tkinter text widget
+            widget._textbox.event_generate("<<SelectAll>>")
 
     def select_download_folder(self):
         """Let user select download folder"""
@@ -874,6 +904,7 @@ class DownloadManagerUI(ctk.CTk):
                 messagebox.showwarning("Invalid URL", "Please enter a valid HTTP/HTTPS URL")
                 return
             
+
             # 🔥 CHECK FOR DUPLICATE WHEN ADDING TO QUEUE 🔥
             filename = os.path.basename(url) or "downloaded_file"
             duplicate_action = self.check_duplicate_file(filename, url)
@@ -893,7 +924,7 @@ class DownloadManagerUI(ctk.CTk):
             
             print("=== AFTER ADDING TO QUEUE ===")
             self.debug_queue_state()
-            
+
             # Single update call
             self._update_queue_display()
             
@@ -914,7 +945,9 @@ class DownloadManagerUI(ctk.CTk):
             urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
             added_count = 0
             invalid_urls = []
+            skipped_duplicates = []
             
+
             for url in urls:
                 if url and url.startswith(('http://', 'https://')):
 
@@ -928,7 +961,7 @@ class DownloadManagerUI(ctk.CTk):
                     elif duplicate_action == "rename":
                         filename = self.generate_unique_filename(filename)
 
-                    download_item = DownloadItem(url, self.download_folder)
+                    download_item = DownloadItem(url, self.download_folder, filename)
                     self.download_queue.append(download_item)
                     added_count += 1
                 elif url.strip():  # Non-empty but invalid URL
@@ -989,8 +1022,9 @@ class DownloadManagerUI(ctk.CTk):
         """Create a single queue item with proper layout"""
         try:
             # Main frame for the queue item
-            item_frame = ctk.CTkFrame(self.queue_frame)
+            item_frame = ctk.CTkFrame(self.queue_frame,height=80)
             item_frame.pack(fill="x", pady=1, padx=1)
+            item_frame.pack_propagate(False)  # Prevent frame from resizing to fit contents
             
             # Left side - File info and status
             left_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
@@ -1022,7 +1056,8 @@ class DownloadManagerUI(ctk.CTk):
             elif item.status == "Completed":
                 status_text += f" | Progress: {item.progress:.0f}%"
             elif item.status == "Error" and hasattr(item, 'error_message'):
-                status_text += f" | Error: {item.error_message[:50]}{'...' if len(item.error_message) > 50 else ''}"
+                error_display = item.error_message[:50] + "..." if len(item.error_message) > 50 else item.error_message
+                status_text += f" | {error_display}"
             
             # Status color coding
             status_colors = {
@@ -1227,16 +1262,22 @@ class DownloadManagerUI(ctk.CTk):
             messagebox.showerror("Download Error", f"Failed to start download item: {str(e)}")
 
     def _run_download_item(self, item):
-        """Run the download for a queue item"""
+        """Run the download for a queue item with proper error handling"""
+        download_successful = False
+        error_message = ""
+        
         try:
+            num_threads = 8  # Default thread count
 
-            # Create downloader with progress callback
+            # Create downloader
             downloader = FastDownloader(
                 item.url,
-                num_threads=8,
+                num_threads=num_threads,
                 progress_callback=lambda idx, speed, percent: self.progress_queue.put((idx, speed, percent)),
-                download_path=item.download_path
+                download_path=item.download_path,
             )
+        
+        # ... rest of your existing code ...
             
             item.downloader = downloader
             self.downloader = downloader
@@ -1251,38 +1292,114 @@ class DownloadManagerUI(ctk.CTk):
             
             # Start download
             downloader.start()
+
+            # Determine actual download path
+            actual_download_path = item.download_path
+            if hasattr(downloader, 'download_path') and downloader.download_path:
+                actual_download_path = downloader.download_path
+
+            if actual_download_path:
+                expected_path = os.path.join(actual_download_path, downloader.filename)
+                expected_path = os.path.abspath(expected_path)
+            else:
+                expected_path = downloader.filename
             
-            # Download completed successfully
-            item.status = "Completed"
-            item.progress = 100
-            item.end_time = datetime.now()
-            
-            # Record successful completion
-            self.history_manager.add_record(
-                url=item.url,
-                filename=item.filename or os.path.basename(item.url),
-                file_size=item.file_size,
-                status="Completed",
-                speed=sum(self.thread_speed) if self.thread_speed else 0
-            )
-            
-        except Exception as e:
-            item.status = "Error"
-            item.error_message = str(e)
-            
-            # Record error
-            self.history_manager.add_record(
-                url=item.url,
-                filename=item.filename or os.path.basename(item.url),
-                file_size=0,
-                status="Error",
-                speed=0,
-                error_msg=str(e)
-            )
-            print(f"Download error: {e}")
+            # ✅ ADD DEBUG INFO
+            print(f"🔍 DEBUG: Downloader filename: {downloader.filename}")
+            print(f"🔍 DEBUG: Download path: {item.download_path}")
+            print(f"🔍 DEBUG: Current directory: {os.getcwd()}")
+            print(f"🔍 DEBUG: Looking for file at: {expected_path}")
+            print(f"🔍 DEBUG: Downloader's download_path: {getattr(downloader, 'download_path', 'Not set')}")
+            print(f"🔍 DEBUG: Item's download_path: {item.download_path}")
+
+            # check multiple possible locations
+            possible_paths = []
+            # the expected path
+            possible_paths.append(expected_path)
+            # current working directory
+            possible_paths.append(os.path.join(os.getcwd(), downloader.filename))
+            # just the filename in current directory
+            possible_paths.append(downloader.filename)
+            # the downloader's download path
+            if hasattr(downloader, 'download_path') and downloader.download_path:
+                possible_paths.append(os.path.join(downloader.download_path, downloader.filename))
+            # the temp file location
+            if actual_download_path:
+                possible_paths.append(os.path.join(actual_download_path, downloader.filename + ".temp"))
+
+            found_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    found_path = os.path.abspath(path)
+                    print(f"🔍 DEBUG: Found downloaded file at: {found_path}")
+                    break
+
+            if found_path:
+                #verify file is not empty and has expected size
+                file_size = os.path.getsize(found_path)
+                if file_size > 0:
+                    download_successful = True
+                    item.filename = os.path.basename(found_path)
+                    item.file_size = file_size
+                    print(f"✅ File size: {file_size} bytes")
+                else:
+                    error_message = f"Downloaded file is empty (0 bytes) at {found_path}."
+            else:
+                #list files in download directory for debugging
+                if itemm.download_path and os.path.exists(item.download_path):
+                    print(f"📁 Files in download directory ({item.download_path}):")
+                    for f in os.listdir(item.download_path):
+                        print(f" - {f}")
+                    
+                    error_message = f"Download completed but file not found. Expected at: {expected_path}"
         
+        except Exception as e:
+            error_message = str(e)
+            #✅ Better error message for connection issues
+            if "403" in error_message:
+                error_message = "Server blocked the download (403 Forbidden) - The website may block download managers"
+            elif "Connection aborted" in error_message or "RemoteDisconnected" in error_message:
+                error_message = "Connection lost with server"
+            elif "Timed out" in error_message.lower():
+                error_message = "Connection timed out"
+            elif "size mismatch" in error_message.lower():
+                error_message = "Downloaded file doesn't match expected size"
+            print(f"Download error: {error_message}")
+
         finally:
-            # Move to next item or finish
+            if download_successful:
+                # Download completed successfully
+                item.status = "Completed"
+                item.progress = 100
+                item.end_time = datetime.now()
+                
+                # Record successful completion
+                self.history_manager.add_record(
+                    url=item.url,
+                    filename=item.filename or os.path.basename(item.url),
+                    file_size=item.file_size,
+                    status="Completed",
+                    speed=sum(self.thread_speed) if self.thread_speed else 0
+                )
+                print(f"✅ Download completed successfully: {item.filename}")
+            else:
+                item.status = "Error"
+                item.error_message = error_message
+                item.progress = 0
+                item.end_time = datetime.now()
+                
+                # Record error
+                self.history_manager.add_record(
+                    url=item.url,
+                    filename=item.filename or os.path.basename(item.url),
+                    file_size=0,
+                    status="Error",
+                    speed=0,
+                    error_msg= error_message
+                )
+                print(f"Download error: {error_message}")
+            
+                # Move to next item or finish
             self.after(0, self._download_item_finished)
 
     def check_duplicate_file(self, filename, url=None):
