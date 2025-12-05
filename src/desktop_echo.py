@@ -1346,7 +1346,7 @@ class DownloadManagerUI(ctk.CTk):
                     error_message = f"Downloaded file is empty (0 bytes) at {found_path}."
             else:
                 #list files in download directory for debugging
-                if itemm.download_path and os.path.exists(item.download_path):
+                if item.download_path and os.path.exists(item.download_path):
                     print(f"📁 Files in download directory ({item.download_path}):")
                     for f in os.listdir(item.download_path):
                         print(f" - {f}")
