@@ -19,7 +19,8 @@ class FastDownloader:
         self.url = url
         self.callback = progress_callback
         self.download_path = download_path or os.getcwd()
-        self.exceptions = [] # To track exceptions from threads
+        self.exceptions = [] # To track exceptions from thread
+        self.messages = []
 
         # Convert to absolute path for consistency
         if self.download_path:

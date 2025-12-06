@@ -32,6 +32,12 @@ class DownloadItem:
         self.file_size = 0
         self.error_message = ""  # Added for better error tracking
         self.item_id = str(uuid.uuid4())[:8]  # Unique ID for the item
+        self.selected = False  # For selection in the queue
+
+    def toggle_selection(self):
+        """Toggle the selection state of the download item"""
+        self.selected = not self.selected
+        return self.selected
 
 class DownloadManagerUI(ctk.CTk):
     def __init__(self):
@@ -132,7 +138,7 @@ class DownloadManagerUI(ctk.CTk):
             left_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
             
             # Right side - Queue management
-            right_frame = ctk.CTkFrame(main_frame, width=350)
+            right_frame = ctk.CTkFrame(main_frame, width=400)
             right_frame.pack(side="right", fill="both", padx=(5, 0))
             right_frame.pack_propagate(False)
                 
@@ -745,6 +751,7 @@ class DownloadManagerUI(ctk.CTk):
             # Control Buttons
             control_frame = ctk.CTkFrame(parent)
             control_frame.pack(fill="x", pady=10)
+
             
             self.add_queue_btn = ctk.CTkButton(control_frame, text="Add to Queue", 
                                              command=self.add_to_queue)
@@ -767,6 +774,32 @@ class DownloadManagerUI(ctk.CTk):
                                                   fg_color="red", hover_color="darkred",
                                                   state="disabled")
             self.cancel_btn.pack(side="left", padx=5)
+
+            # Selection info label
+            self.selection_info_label = ctk.CTkLabel(parent, text="No items selected", 
+                                                   text_color="gray", font=ctk.CTkFont(size=11))
+            self.selection_info_label.pack(anchor="w", pady=(5, 0))
+            
+            # Update the _update_main_button_states to also update this label:
+            def _update_main_button_states(self):
+                """Update main control button states based on selection"""
+                # Get selected items
+                selected_items = [item for item in self.download_queue if item.selected]
+                
+                # Update selection info label
+                if selected_items:
+                    downloading = sum(1 for item in selected_items if item.status == "Downloading")
+                    paused = sum(1 for item in selected_items if item.status == "Paused")
+                    queued = sum(1 for item in selected_items if item.status == "Queued")
+                    
+                    info_text = f"Selected: {len(selected_items)} item(s)"
+                    if downloading: info_text += f" | Downloading: {downloading}"
+                    if paused: info_text += f" | Paused: {paused}"
+                    if queued: info_text += f" | Queued: {queued}"
+                    
+                    self.selection_info_label.configure(text=info_text, text_color="#FFD700")
+                else:
+                    self.selection_info_label.configure(text="No items selected", text_color="gray")
 
             # History & Statistics Button
             self.history_btn = ctk.CTkButton(control_frame, text="History & Stats",command=self.show_history_statistics)
@@ -821,15 +854,50 @@ class DownloadManagerUI(ctk.CTk):
         try:
             ctk.CTkLabel(parent, text="Download Queue", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
             
-            # Queue controls
+            # ✅ ADD SELECTION CONTROLS FRAME
+            selection_frame = ctk.CTkFrame(parent)
+            selection_frame.pack(fill="x", padx=10, pady=(0, 5))
+            
+            # Left side: Selection controls
+            select_controls = ctk.CTkFrame(selection_frame, fg_color="transparent")
+            select_controls.pack(side="left", fill="x", expand=True)
+            
+            ctk.CTkButton(select_controls, text="Select All", 
+                        command=self._select_all_items, width=100).pack(side="left", padx=(0, 5))
+            
+            ctk.CTkButton(select_controls, text="Deselect All", 
+                        command=self._deselect_all_items, width=100).pack(side="left", padx=(0, 5))
+            
+            # Right side: Bulk actions
+            bulk_controls = ctk.CTkFrame(selection_frame, fg_color="transparent")
+            bulk_controls.pack(side="right")
+            
+            # Store references to bulk buttons for later enabling/disabling
+            self.pause_selected_btn = ctk.CTkButton(bulk_controls, text="Pause Selected", 
+                                                command=self._pause_selected, width=120,
+                                                state="disabled")
+            self.pause_selected_btn.pack(side="top", padx=2)
+            
+            self.resume_selected_btn = ctk.CTkButton(bulk_controls, text="Resume Selected", 
+                                                command=self._resume_selected, width=120,
+                                                state="disabled")
+            self.resume_selected_btn.pack(side="top", padx=2)
+            
+            self.cancel_selected_btn = ctk.CTkButton(bulk_controls, text="Cancel Selected", 
+                                                command=self._cancel_selected, width=120,
+                                                fg_color="red", hover_color="darkred",
+                                                state="disabled")
+            self.cancel_selected_btn.pack(side="top", padx=2)
+            
+            # Existing Queue controls (moved down)
             queue_controls = ctk.CTkFrame(parent)
             queue_controls.pack(fill="x", padx=10, pady=(0, 10))
             
             ctk.CTkButton(queue_controls, text="Clear Completed", 
-                         command=self.clear_completed, width=120).pack(side="left", padx=(0, 5))
+                        command=self.clear_completed, width=120).pack(side="left", padx=(0, 5))
             
             ctk.CTkButton(queue_controls, text="Clear All", 
-                         command=self.clear_all_queue, width=80).pack(side="right")
+                        command=self.clear_all_queue, width=80).pack(side="right")
             
             # Queue list with proper height
             ctk.CTkLabel(parent, text="Downloads:", font=ctk.CTkFont(size=14)).pack(anchor="w", padx=10, pady=(5, 0))
@@ -839,6 +907,7 @@ class DownloadManagerUI(ctk.CTk):
             
             self.queue_item_frames = []
             self.queue_item_widgets = {}
+            
         except Exception as e:
             messagebox.showerror("UI Error", f"Failed to create queue section: {str(e)}")
 
@@ -991,6 +1060,12 @@ class DownloadManagerUI(ctk.CTk):
             # Always refresh rather than recreate to prevent flickering
             self._refresh_queue_display()
 
+            # Update main buttons state
+            self._update_main_button_states()
+
+            if hasattr(self, '_update_bulk_buttons_state'):
+                self._update_bulk_buttons_state()
+
         except Exception as e:
             print(f"Queue display update error: {e}")
         finally:
@@ -1018,124 +1093,341 @@ class DownloadManagerUI(ctk.CTk):
         except Exception as e:
             print(f"Queue refresh error: {e}")
 
+    def _pause_single_download(self, index):
+        """Pause a specific download by index"""
+        try:
+            if 0 <= index < len(self.download_queue):
+                item = self.download_queue[index]
+                if item.status == "Downloading" and item.downloader:
+                    item.downloader.pause()
+                    item.status = "Paused"
+                    self._update_queue_display()
+                    print(f"⏸ Paused individual download: {item.filename or item.url}")
+                else:
+                    print(f"⚠ Cannot pause: Item not downloading or no downloader")
+        except Exception as e:
+            print(f"❌ Error pausing individual download: {e}")
+
+    def _resume_single_download(self, index):
+        """Resume a specific download by index"""
+        try:
+            if 0 <= index < len(self.download_queue):
+                item = self.download_queue[index]
+                if item.status == "Paused" and item.downloader:
+                    item.downloader.resume()
+                    item.status = "Downloading"
+                    self._update_queue_display()
+                    print(f"▶ Resumed individual download: {item.filename or item.url}")
+                else:
+                    print(f"⚠ Cannot resume: Item not paused or no downloader")
+        except Exception as e:
+            print(f"❌ Error resuming individual download: {e}")
+
+    def _cancel_single_download(self, index):
+        """Cancel a specific download by index"""
+        try:
+            if 0 <= index < len(self.download_queue):
+                item = self.download_queue[index]
+                
+                # Ask for confirmation (only if not already in error/cancelled state)
+                if item.status in ["Queued", "Downloading", "Paused"]:
+                    if not messagebox.askyesno("Confirm Cancel", 
+                                            f"Cancel download: {item.filename or os.path.basename(item.url)}?"):
+                        return
+                
+                # Handle based on status
+                if item.status == "Downloading" and item.downloader:
+                    # Mark as cancelled and stop the downloader
+                    item.downloader.paused = True  # This will stop download threads
+                    item.status = "Cancelled"
+                    item.progress = 0
+                    
+                    # Record cancellation in history
+                    self.history_manager.add_record(
+                        url=item.url,
+                        filename=item.filename or os.path.basename(item.url),
+                        file_size=0,
+                        status="Cancelled",
+                        speed=0,
+                        error_msg="Cancelled by user (individual)"
+                    )
+                    
+                    # If this was the current active download, move to next
+                    if self.current_download == item:
+                        self._download_item_finished()
+                    
+                elif item.status == "Paused" and item.downloader:
+                    item.status = "Cancelled"
+                    item.progress = 0
+                    
+                    # Record cancellation in history
+                    self.history_manager.add_record(
+                        url=item.url,
+                        filename=item.filename or os.path.basename(item.url),
+                        file_size=0,
+                        status="Cancelled",
+                        speed=0,
+                        error_msg="Cancelled by user (individual)"
+                    )
+                    
+                    # If this was the current active download, move to next
+                    if self.current_download == item:
+                        self._download_item_finished()
+                        
+                elif item.status == "Queued":
+                    # Just remove from queue (this will be handled by _remove_from_queue)
+                    self._remove_from_queue(index)
+                    return
+                
+                # Update the queue display to reflect the new status
+                self._update_queue_display()
+                print(f"✕ Cancelled individual download: {item.filename or item.url}")
+                
+        except Exception as e:
+            print(f"❌ Error cancelling individual download: {e}")
+
+    def _remove_from_queue(self, index):
+        """Remove item from queue (updated to handle individual removal)"""
+        try:
+            if 0 <= index < len(self.download_queue):
+                item = self.download_queue[index]
+                
+                # Record cancellation for queued items that are removed
+                if item.status == "Queued":
+                    self.history_manager.add_record(
+                        url=item.url,
+                        filename=item.filename or os.path.basename(item.url),
+                        file_size=0,
+                        status="Cancelled", 
+                        speed=0,
+                        error_msg="Removed from queue before download"
+                    )
+                
+                # If removing current download, cancel it first
+                if self.current_download == self.download_queue[index]:
+                    self.cancel_current_download(confirm=False)
+                
+                del self.download_queue[index]
+                self._update_queue_display()
+        except Exception as e:
+            messagebox.showerror("Queue Error", f"Failed to remove item: {str(e)}")
+
     def _create_queue_item(self, index, item):
-        """Create a single queue item with proper layout"""
+        """Create a single queue item with selection and individual controls"""
         try:
             # Main frame for the queue item
-            item_frame = ctk.CTkFrame(self.queue_frame,height=80)
+            item_frame = ctk.CTkFrame(self.queue_frame, height=80)
             item_frame.pack(fill="x", pady=1, padx=1)
-            item_frame.pack_propagate(False)  # Prevent frame from resizing to fit contents
+            item_frame.pack_propagate(False)
             
-            # Left side - File info and status
-            left_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
-            left_frame.pack(side="left", fill="both", expand=True, padx=3, pady=1)
+            # ✅ ADD CLICK-TO-SELECT FUNCTIONALITY
+            def handle_frame_click(event):
+                clicked_widget = event.widget
+
+                # Don't allow selection of completed items
+                if item.status == "Completed":
+                    return
+
+                # Check if the clicked widget is a button or checkbox
+                is_button_or_checkbox = False
+
+               # check if clicked widget is the checkbox
+                if clicked_widget == selection_cb._canvas or clicked_widget == selection_cb:
+                    return
+
+                # Check if clicked widget is one of the buttons
+                for btn in btn_frame.winfo_children():
+                    if clicked_widget == btn or clicked_widget == btn._canvas:
+                        is_button_or_checkbox = True
+                        break
+
+                # Toggle selection only if not clicking on button/checkbox
+                if not is_button_or_checkbox:
+                    item.selected = not item.selected
+                    # update the checkbox  to match item's selection state
+                    if hasattr(item, 'selection_checkbox') and item.selection_checkbox:
+                        selection_var.set(item.selected)
+
+                    # Visual feedback for selection
+                    if item.selected:
+                        # Highlight selected items with gold border
+                        item_frame.configure(border_width=2, border_color="#FFD700")
+                        filename_label.configure(font=ctk.CTkFont(size=11))
+                    else:
+                        item_frame.configure(border_width=0)
+                        filename_label.configure(font=ctk.CTkFont(size=11, weight="normal"))
+                    # Also highlight if this is the current active download
+                    if item == self.current_download:
+                        item_frame.configure(border_width=1, border_color="#3B8ED0")  # Blue for current
+
+                    self._update_queue_display()
             
-            # Extract filename
+            item_frame.bind("<Button-1>", handle_frame_click)
+            
+            # Content frame
+            content_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
+            content_frame.pack(fill="both", expand=True, padx=3, pady=2)
+            
+            # Top row: Checkbox, filename, and action buttons
+            top_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+            top_frame.pack(fill="x", pady=(0, 1))
+            
+            # ✅ SELECTION CHECKBOX
+            if item.status != "Completed":
+                selection_var = ctk.BooleanVar(value=item.selected)
+                
+                # In _create_queue_item method, update the selection highlighting:
+                def toggle_selection():
+                    item.selected = selection_var.get()
+                    # Visual feedback for selection
+                    if item.selected:
+                        # Highlight selected items with yellow border
+                        item_frame.configure(border_width=2, border_color="#FFD700")  # Gold color for selected
+                        filename_label.configure(font=ctk.CTkFont(size=11))
+                    else:
+                        item_frame.configure(border_width=0)
+                        filename_label.configure(font=ctk.CTkFont(size=11, weight="normal"))
+                    
+                    # Also highlight if this is the current active download
+                    if item == self.current_download:
+                        item_frame.configure(border_width=1, border_color="#3B8ED0")  # Blue for current
+
+                    self._update_queue_display()
+            
+                selection_cb = ctk.CTkCheckBox(
+                    top_frame, 
+                    text="", 
+                    variable=selection_var,
+                    command=toggle_selection,
+                    width=20
+                )
+                selection_cb.pack(side="left", padx=(0, 5))
+                selection_cb.bind("<Button-1>", lambda e: "break")  # Prevent frame click
+            else:
+                # For completed items, add a placeholder to align
+                placeholder = ctk.CTkFrame(top_frame, text="", width=20)
+                placeholder.pack(side="left", padx=(0, 5))
+                item.selection_checkbox = None # No checkbox for completed items
+                
+            # Filename (expanded area)
             filename = item.filename or os.path.basename(item.url) or "Unknown File"
-            if not filename:
-                filename = f"download_{index+1}"
+            display_filename = filename[:40] + "..." if len(filename) > 40 else filename
             
-            # Truncate filename appropriately but keep important info
-            display_filename = filename[:45] + "..." if len(filename) > 45 else filename
-            
-            # Filename label
             filename_label = ctk.CTkLabel(
-                left_frame, 
+                top_frame, 
                 text=display_filename,
-                font=ctk.CTkFont(size=12, weight="bold"),
+                font=ctk.CTkFont(size=11, weight="bold"),
                 anchor="w"
             )
-            filename_label.pack(fill="x", pady=0)
+            filename_label.pack(side="left", fill="x", expand=True, padx=(0, 5))
+            filename_label.bind("<Button-1>", lambda e: "break")  # Prevent frame click
             
-            # Status and progress information
-            status_text = f"Status: {item.status}"
-            if item.status == "Downloading":
-                status_text += f" | Progress: {item.progress:.1f}% | Speed: {item.speed:.2f} MB/s"
-                if hasattr(item, 'file_size') and item.file_size > 0:
-                    status_text += f" | Size: {item.file_size:,} bytes"
-            elif item.status == "Completed":
-                status_text += f" | Progress: {item.progress:.0f}%"
-            elif item.status == "Error" and hasattr(item, 'error_message'):
-                error_display = item.error_message[:50] + "..." if len(item.error_message) > 50 else item.error_message
-                status_text += f" | {error_display}"
+            # ✅ INDIVIDUAL ACTION BUTTONS
+            btn_frame = ctk.CTkFrame(top_frame, fg_color="transparent")
+            btn_frame.pack(side="right", padx=(5, 0))
             
-            # Status color coding
+            # Status-specific individual buttons
+            if item.status == "Queued":
+                # Move up/down buttons
+                ctk.CTkButton(btn_frame, text="▲", width=25, height=20,
+                            command=lambda idx=index: self._move_up(idx),
+                            font=ctk.CTkFont(size=9)).pack(side="left", padx=1)
+                ctk.CTkButton(btn_frame, text="▼", width=25, height=20,
+                            command=lambda idx=index: self._move_down(idx),
+                            font=ctk.CTkFont(size=9)).pack(side="left", padx=1)
+                # Remove button
+                ctk.CTkButton(btn_frame, text="✕", width=25, height=20,
+                            command=lambda idx=index: self._remove_from_queue(idx),
+                            fg_color="red", hover_color="darkred",
+                            font=ctk.CTkFont(size=9)).pack(side="left", padx=1)
+            
+            elif item.status == "Downloading":
+                # Individual pause button for this item
+                ctk.CTkButton(btn_frame, text="⏸", width=25, height=20,
+                            command=lambda idx=index: self._pause_single_download(idx),
+                            font=ctk.CTkFont(size=9)).pack(side="left", padx=1)
+                # Individual cancel button for this item
+                ctk.CTkButton(btn_frame, text="✕", width=25, height=20,
+                            command=lambda idx=index: self._cancel_single_download(idx),
+                            fg_color="red", hover_color="darkred",
+                            font=ctk.CTkFont(size=9)).pack(side="left", padx=1)
+            
+            elif item.status == "Paused":
+                # Individual resume button for this item
+                ctk.CTkButton(btn_frame, text="▶", width=25, height=20,
+                            command=lambda idx=index: self._resume_single_download(idx),
+                            font=ctk.CTkFont(size=9)).pack(side="left", padx=1)
+                # Individual cancel button for this item
+                ctk.CTkButton(btn_frame, text="✕", width=25, height=20,
+                            command=lambda idx=index: self._cancel_single_download(idx),
+                            fg_color="red", hover_color="darkred",
+                            font=ctk.CTkFont(size=9)).pack(side="left", padx=1)
+            
+            # Prevent button clicks from triggering frame selection
+            for btn in btn_frame.winfo_children():
+                btn.bind("<Button-1>", lambda e: "break")
+            
+            # Middle row: Status information
+            middle_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+            middle_frame.pack(fill="x", pady=(0, 1))
+            
             status_colors = {
                 "Queued": "gray",
-                "Downloading": "#3B8ED0",  # Blue
-                "Paused": "orange",
+                "Downloading": "#3B8ED0",
+                "Paused": "orange", 
                 "Completed": "green",
                 "Error": "red",
                 "Cancelled": "darkgray"
             }
             
+            status_text = f"{item.status}"
+            if item.status == "Downloading":
+                status_text += f" | {item.progress:.1f}% | {item.speed:.2f} MB/s"
+                if hasattr(item, 'file_size') and item.file_size > 0:
+                    size_mb = item.file_size / (1024 * 1024)
+                    status_text += f" | {size_mb:.1f} MB"
+            elif item.status == "Error" and hasattr(item, 'error_message'):
+                error_display = item.error_message[:40] + "..." if len(item.error_message) > 40 else item.error_message
+                status_text += f" | {error_display}"
+            
             status_label = ctk.CTkLabel(
-                left_frame, 
+                middle_frame, 
                 text=status_text,
                 text_color=status_colors.get(item.status, "gray"),
-                font=ctk.CTkFont(size=11),
-                anchor="w",
-                wraplength=250  # Wrap long status text
+                font=ctk.CTkFont(size=10),
+                anchor="w"
             )
-            status_label.pack(fill="x", pady=0)
+            status_label.pack(fill="x")
+            status_label.bind("<Button-1>", lambda e: "break")  # Prevent frame click
             
-            # Timestamp information
-            timestamp_info = ""
-            if item.added_time:
-                timestamp_info += f"Added: {item.added_time.strftime('%H:%M:%S')}"
+            # Bottom row: Timestamps
+            bottom_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+            bottom_frame.pack(fill="x")
+            
+            timestamp_info = f"Added: {item.added_time.strftime('%H:%M:%S')}"
             if item.start_time:
                 timestamp_info += f" | Started: {item.start_time.strftime('%H:%M:%S')}"
             if item.end_time and item.status == "Completed":
                 timestamp_info += f" | Finished: {item.end_time.strftime('%H:%M:%S')}"
             
-            if timestamp_info:
-                time_label = ctk.CTkLabel(
-                    left_frame,
-                    text=timestamp_info,
-                    font=ctk.CTkFont(size=9),
-                    text_color="lightgray",
-                    anchor="w"
-                )
-                time_label.pack(fill="x", pady=0)
+            time_label = ctk.CTkLabel(
+                bottom_frame,
+                text=timestamp_info,
+                font=ctk.CTkFont(size=9),
+                text_color="lightgray",
+                anchor="w"
+            )
+            time_label.pack(fill="x")
+            time_label.bind("<Button-1>", lambda e: "break")  # Prevent frame click
             
-            # Right side - Action buttons
-            btn_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
-            btn_frame.pack(side="right", fill="y", padx=5, pady=3)
+            # Store references for later
+            item.ui_frame = item_frame
+            item.selection_checkbox = selection_cb
             
-            # Add buttons based on status
-            if item.status == "Queued":
-                button_frame = ctk.CTkFrame(btn_frame, fg_color="transparent")
-                button_frame.pack()
+            # Apply visual selection state
+            if item.selected:
+                item_frame.configure(border_width=1, border_color="#3B8ED0")
                 
-                ctk.CTkButton(button_frame, text="▲", width=30, height=25,
-                            command=lambda idx=index: self._move_up(idx),
-                            font=ctk.CTkFont(size=10)).pack(side="left", padx=1)
-                ctk.CTkButton(button_frame, text="▼", width=30, height=25,
-                            command=lambda idx=index: self._move_down(idx),
-                            font=ctk.CTkFont(size=10)).pack(side="left", padx=1)
-                ctk.CTkButton(button_frame, text="✕", width=30, height=25,
-                            command=lambda idx=index: self._remove_from_queue(idx),
-                            fg_color="red", hover_color="darkred",
-                            font=ctk.CTkFont(size=10)).pack(side="left", padx=1)
-            
-            elif item.status == "Downloading":
-                ctk.CTkButton(btn_frame, text="⏸", width=35, height=30,
-                            command=self.pause_download,
-                            font=ctk.CTkFont(size=12)).pack(pady=1)
-                ctk.CTkButton(btn_frame, text="✕", width=35, height=30,
-                            command=lambda: self.cancel_current_download(),
-                            fg_color="red", hover_color="darkred",
-                            font=ctk.CTkFont(size=12)).pack(pady=1)
-            
-            elif item.status == "Paused":
-                ctk.CTkButton(btn_frame, text="▶", width=35, height=30,
-                            command=self.resume_download,
-                            font=ctk.CTkFont(size=12)).pack(pady=1)
-                ctk.CTkButton(btn_frame, text="✕", width=35, height=30,
-                            command=lambda: self.cancel_current_download(),
-                            fg_color="red", hover_color="darkred",
-                            font=ctk.CTkFont(size=12)).pack(pady=1)
-            
         except Exception as e:
             print(f"Error creating queue item {index}: {e}")
 
@@ -1190,7 +1482,7 @@ class DownloadManagerUI(ctk.CTk):
         try:
             initial_count = len(self.download_queue)
             self.download_queue = [item for item in self.download_queue 
-                                 if item.status not in ["Completed", "Cancelled", "Error"]]
+                                if item.status not in ["Completed", "Cancelled", "Error"]]
             removed_count = initial_count - len(self.download_queue)
             
             if removed_count > 0:
@@ -1219,48 +1511,62 @@ class DownloadManagerUI(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Queue Error", f"Failed to clear queue: {str(e)}")
 
-    def start_download(self):
-        """Start downloading from queue"""
-        try:
-            if not self.download_queue:
-                messagebox.showwarning("Warning", "Queue is empty")
-                return
-            
-            # Find first queued item
-            for item in self.download_queue:
-                if item.status == "Queued":
-                    self._start_download_item(item)
-                    return
-            
-            messagebox.showinfo("Info", "No queued items to download")
-        except Exception as e:
-            messagebox.showerror("Download Error", f"Failed to start download: {str(e)}")
-
     def _start_download_item(self, item):
         """Start downloading a specific item"""
         try:
-            self.current_download = item
+            # Don't start if already downloading
+            if item.status in ["Downloading"]:
+                print(f"⚠ Item {item.filename} is already downloading")
+                return
+
+            # Don't start if already completed
+            if item.status == "Completed":
+                print(f"⚠ Item {item.filename} is already completed")
+                return
+                
+            # Set this as active download ONLY for tracking purposes
+            # But allow multiple items to be "current" by having a list
+            if not hasattr(self, 'active_downloads'):
+                self.active_downloads = []
+            
+            # Add to active downloads if not already there
+            if item not in self.active_downloads:
+                self.active_downloads.append(item)
+            
             item.status = "Downloading"
             item.start_time = datetime.now()
             item.error_message = ""  # Clear previous errors
             
-            self.status_label.configure(text=f"Downloading: {os.path.basename(item.url) or 'Unknown'}", 
-                                      text_color="white")
-            self.current_file_label.configure(text=f"Current: {os.path.basename(item.url) or 'Unknown'}")
+            # Update status to show which items are downloading
+            active_count = len([d for d in self.active_downloads if d.status == "Downloading"])
+            paused_count = len([d for d in self.active_downloads if d.status == "Paused"])
             
-            # Enable/disable buttons
-            self.pause_btn.configure(state="normal")
-            self.resume_btn.configure(state="disabled")
-            self.start_btn.configure(state="disabled")
-            self.cancel_btn.configure(state="normal")
+            status_text = f"Active: {active_count} downloading"
+            if paused_count > 0:
+                status_text += f", {paused_count} paused"
+                
+            self.status_label.configure(text=status_text, text_color="white")
             
+            # Update current file label for this specific item
+            short_name = item.filename or os.path.basename(item.url) or "Unknown"
+            if len(short_name) > 30:
+                short_name = short_name[:27] + "..."
+            self.current_file_label.configure(text=f"Started: {short_name}")
+            
+            # Update button states based on selection
+            self._update_main_button_states()
+            
+            # Update the queue display
             self._update_queue_display()
             
             # Start download in background thread
             threading.Thread(target=self._run_download_item, args=(item,), daemon=True).start()
+            
+            print(f"🚀 Started download: {item.filename} (Active downloads: {len(self.active_downloads)})")
+            
         except Exception as e:
             messagebox.showerror("Download Error", f"Failed to start download item: {str(e)}")
-
+            
     def _run_download_item(self, item):
         """Run the download for a queue item with proper error handling"""
         download_successful = False
@@ -1346,7 +1652,7 @@ class DownloadManagerUI(ctk.CTk):
                     error_message = f"Downloaded file is empty (0 bytes) at {found_path}."
             else:
                 #list files in download directory for debugging
-                if itemm.download_path and os.path.exists(item.download_path):
+                if item.download_path and os.path.exists(item.download_path):
                     print(f"📁 Files in download directory ({item.download_path}):")
                     for f in os.listdir(item.download_path):
                         print(f" - {f}")
@@ -1582,9 +1888,9 @@ class DownloadManagerUI(ctk.CTk):
                     width=200).pack(pady=10)
         
         ctk.CTkButton(export_frame, text="🗑️ Cleanup Downloaded Files", 
-                         command=self.cleanup_downloaded_files,
-                         fg_color="orange", hover_color="darkorange",
-                         width=200).pack(pady=5)
+                        command=self.cleanup_downloaded_files,
+                        fg_color="orange", hover_color="darkorange",
+                        width=200).pack(pady=5)
 
         ctk.CTkButton(export_frame, text="Clear History", 
                     command=self.clear_history,
@@ -1662,19 +1968,31 @@ class DownloadManagerUI(ctk.CTk):
     def _download_item_finished(self):
         """Handle completion of a download item"""
         try:
-            self.current_download = None
-            self.downloader = None
+            # Remove from active downloads if exists
+            if hasattr(self, 'active_downloads'):
+                # Keep only items that are still downloading or paused
+                self.active_downloads = [item for item in self.active_downloads 
+                                       if item.status in ["Downloading", "Paused"]]
             
             # Update UI
             self._update_queue_display()
-            self.status_label.configure(text="Download completed", text_color="green")
-            self.pause_btn.configure(state="disabled")
-            self.resume_btn.configure(state="disabled")
-            self.start_btn.configure(state="normal")
-            self.cancel_btn.configure(state="disabled")
-
-            # Start next download if available
-            self.after(1000, self._start_next_download)
+            
+            # Update status based on remaining active downloads
+            if hasattr(self, 'active_downloads') and self.active_downloads:
+                active_count = len([d for d in self.active_downloads if d.status == "Downloading"])
+                paused_count = len([d for d in self.active_downloads if d.status == "Paused"])
+                
+                status_text = f"Active: {active_count} downloading"
+                if paused_count > 0:
+                    status_text += f", {paused_count} paused"
+                self.status_label.configure(text=status_text, text_color="white")
+            else:
+                self.status_label.configure(text="All downloads completed", text_color="green")
+                self.current_file_label.configure(text="Current: None")
+            
+            # Update button states
+            self._update_main_button_states()
+            
         except Exception as e:
             print(f"Download finished error: {e}")
 
@@ -1699,57 +2017,255 @@ class DownloadManagerUI(ctk.CTk):
         except Exception as e:
             print(f"Thread label update error: {e}")
 
-    def pause_download(self):
-        """Pause current download"""
+    def start_download(self):
+
+        """Start SELECTED queued downloads"""
         try:
-            if self.current_download and self.current_download.status == "Downloading":
-                if self.downloader:
-                    self.downloader.pause()
-                    self.downloader_paused = True
-                    self.current_download.status = "Paused"
-                    self.status_label.configure(text="Download Paused", text_color="orange")
-                    self.pause_btn.configure(state="disabled")
-                    self.resume_btn.configure(state="normal")
+            # Get selected queued items
+            selected_queued = [item for item in self.download_queue 
+                              if item.selected and item.status == "Queued"]
+            
+            if selected_queued:
+                print(f"🚀 Starting {len(selected_queued)} selected queued item(s)")
+                # Start each selected queued item
+                for item in selected_queued:
+                    self._start_download_item(item)
+                
+                # Clear selection after starting
+                for item in selected_queued:
+                    item.selected = False
+                    
+                self._update_queue_display()
+                self.status_label.configure(
+                    text=f"Started {len(selected_queued)} selected item(s)", 
+                    text_color="white"
+                )
+            else:
+                # If nothing selected, find first queued item
+                queued_items = [item for item in self.download_queue if item.status == "Queued"]
+                if queued_items:
+                    print(f"🚀 Starting first queued item: {queued_items[0].filename}") 
+                    self._start_download_item(queued_items[0])
+                    self.status_label.configure(
+                        text=f"Started: {queued_items[0].filename}", 
+                        text_color="white"
+                    )
+                else:
+                    messagebox.showwarning("Warning", "No queued items to download")
+                    
+        except Exception as e:
+            messagebox.showerror("Download Error", f"Failed to start download: {str(e)}")
+
+
+        """Pause SELECTED downloads that are downloading"""
+        try:
+            selected_items = [item for item in self.download_queue if item.selected]
+            
+            if selected_items:
+                # Pause all selected downloading items
+                paused_count = 0
+                for item in selected_items:
+                    if item.status == "Downloading" and item.downloader:
+                        item.downloader.pause()
+                        item.status = "Paused"
+                        paused_count += 1
+                
+                if paused_count > 0:
                     self._update_queue_display()
+                    self.status_label.configure(
+                        text=f"Paused {paused_count} selected item(s)", 
+                        text_color="orange"
+                    )
+                    print(f"⏸ Paused {paused_count} selected item(s)")
+                else:
+                    messagebox.showinfo("Info", "No downloading items selected to pause")
+            else:
+                # If nothing selected, pause current active download
+                active_downloads = [item for item in self.download_queue 
+                                  if item.status == "Downloading"]
+                if active_downloads:
+                    for item in active_downloads:
+                        if item.downloader:
+                            item.downloader.pause()
+                            item.status = "Paused"
+                    self._update_queue_display()
+                    self.status_label.configure(
+                        text=f"Paused {len(active_downloads)} active download(s)", 
+                        text_color="orange"
+                    )
+                else:
+                    messagebox.showinfo("Info", "No active downloads to pause")
+                    
+        except Exception as e:
+            messagebox.showerror("Pause Error", f"Failed to pause download: {str(e)}")
+
+    def pause_download(self):
+        """Pause SELECTED downloads that are downloading, or all downloading if none selected"""
+        try:
+            selected_items = [item for item in self.download_queue if item.selected]
+            
+            if selected_items:
+                # Pause all selected downloading items
+                paused_count = 0
+                for item in selected_items:
+                    if item.status == "Downloading" and item.downloader:
+                        item.downloader.pause()
+                        item.status = "Paused"
+                        paused_count += 1
+                
+                if paused_count > 0:
+                    self._update_queue_display()
+                    self.status_label.configure(
+                        text=f"Paused {paused_count} selected item(s)", 
+                        text_color="orange"
+                    )
+                    print(f"⏸ Paused {paused_count} selected item(s)")
+                else:
+                    messagebox.showinfo("Info", "No downloading items selected to pause")
+            else:
+                # If nothing selected, pause all active downloads
+                active_downloads = [item for item in self.download_queue 
+                                  if item.status == "Downloading"]
+                if active_downloads:
+                    for item in active_downloads:
+                        if item.downloader:
+                            item.downloader.pause()
+                            item.status = "Paused"
+                    self._update_queue_display()
+                    self.status_label.configure(
+                        text=f"Paused {len(active_downloads)} active download(s)", 
+                        text_color="orange"
+                    )
+                    print(f"⏸ Paused {len(active_downloads)} active download(s)")
+                else:
+                    messagebox.showinfo("Info", "No active downloads to pause")
+            
+            # Update the button states via the main method
+            self._update_main_button_states()
+                    
         except Exception as e:
             messagebox.showerror("Pause Error", f"Failed to pause download: {str(e)}")
 
     def resume_download(self):
-        """Resume current download"""
+        """Resume SELECTED downloads that are paused"""
         try:
-            if self.current_download and self.current_download.status == "Paused":
-                if self.downloader:
-                    self.downloader.resume()
-                    self.downloader_paused = False
-                    self.current_download.status = "Downloading"
-                    self.status_label.configure(text="Downloading...", text_color="white")
-                    self.pause_btn.configure(state="normal")
-                    self.resume_btn.configure(state="disabled")
+            selected_items = [item for item in self.download_queue if item.selected]
+            
+            if selected_items:
+                # Resume all selected paused items
+                resumed_count = 0
+                for item in selected_items:
+                    if item.status == "Paused" and item.downloader:
+                        item.downloader.resume()
+                        item.status = "Downloading"
+                        resumed_count += 1
+                
+                if resumed_count > 0:
                     self._update_queue_display()
+                    self.status_label.configure(
+                        text=f"Resumed {resumed_count} selected item(s)", 
+                        text_color="white"
+                    )
+                    print(f"▶ Resumed {resumed_count} selected item(s)")
+                else:
+                    messagebox.showinfo("Info", "No paused items selected to resume")
+            else:
+                # If nothing selected, resume paused downloads
+                paused_items = [item for item in self.download_queue 
+                               if item.status == "Paused"]
+                if paused_items:
+                    for item in paused_items:
+                        if item.downloader:
+                            item.downloader.resume()
+                            item.status = "Downloading"
+                    self._update_queue_display()
+                    self.status_label.configure(
+                        text=f"Resumed {len(paused_items)} paused item(s)", 
+                        text_color="white"
+                    )
+                    print(f"▶ Resumed {len(paused_items)} paused item(s)")
+                else:
+                    messagebox.showinfo("Info", "No paused downloads to resume")
+            
+            # Update button states
+            self._update_main_button_states()
+
         except Exception as e:
             messagebox.showerror("Resume Error", f"Failed to resume download: {str(e)}")
 
-    def cancel_current_download(self, confirm=True):
-        """Cancel current download"""
+    def cancel_current_download(self):
+        """Cancel SELECTED downloads (or current if none selected)"""
         try:
-            if self.current_download:
-                if confirm and not messagebox.askyesno("Confirm", "Cancel current download?"):
+            selected_items = [item for item in self.download_queue if item.selected]
+            
+            if selected_items:
+                # Cancel selected items
+                if not messagebox.askyesno("Confirm Cancel", 
+                                          f"Cancel {len(selected_items)} selected download(s)?"):
                     return
                 
-                self.history_manager.add_record(
-                    url=self.current_download.url,
-                    filename=self.current_download.filename or os.path.basename(self.current_download.url),
-                    file_size=0,
-                    status="Cancelled",
-                    speed=0,
-                    error_msg="Download cancelled by user"
-                )
-
-                self.current_download.status = "Cancelled"
-                if self.downloader:
-                    # We can't easily stop the downloader thread, so we'll mark it as cancelled
-                    pass
-                self._download_item_finished()
+                cancelled_count = 0
+                for item in selected_items:
+                    if item.status in ["Queued", "Downloading", "Paused"]:
+                        # Stop the downloader if it exists
+                        if item.downloader:
+                            item.downloader.paused = True
+                        
+                        # Record in history
+                        self.history_manager.add_record(
+                            url=item.url,
+                            filename=item.filename or os.path.basename(item.url),
+                            file_size=0,
+                            status="Cancelled",
+                            speed=0,
+                            error_msg="Cancelled by user (selected)"
+                        )
+                        
+                        item.status = "Cancelled"
+                        item.progress = 0
+                        cancelled_count += 1
+                
+                if cancelled_count > 0:
+                    self._update_queue_display()
+                    self.status_label.configure(
+                        text=f"Cancelled {cancelled_count} selected item(s)", 
+                        text_color="red"
+                    )
+                    print(f"✕ Cancelled {cancelled_count} selected item(s)")
+            else:
+                # If nothing selected, cancel all active downloads
+                active_items = [item for item in self.download_queue 
+                               if item.status in ["Downloading", "Paused"]]
+                
+                if active_items:
+                    if not messagebox.askyesno("Confirm Cancel", 
+                                              f"Cancel {len(active_items)} active download(s)?"):
+                        return
+                    
+                    for item in active_items:
+                        if item.downloader:
+                            item.downloader.paused = True
+                        
+                        self.history_manager.add_record(
+                            url=item.url,
+                            filename=item.filename or os.path.basename(item.url),
+                            file_size=0,
+                            status="Cancelled",
+                            speed=0,
+                            error_msg="Download cancelled by user"
+                        )
+                        
+                        item.status = "Cancelled"
+                        item.progress = 0
+                    
+                    self._update_queue_display()
+                    self.status_label.configure(
+                        text=f"Cancelled {len(active_items)} active download(s)", 
+                        text_color="red"
+                    )
+                else:
+                    messagebox.showinfo("Info", "No active downloads to cancel")
+                    
         except Exception as e:
             messagebox.showerror("Cancel Error", f"Failed to cancel download: {str(e)}")
 
@@ -1814,7 +2330,294 @@ class DownloadManagerUI(ctk.CTk):
 
         # Schedule next update
         self.after(100, self.update_thread_display)
+    
+    def resume_download(self):
+        """Resume SELECTED downloads (or current if none selected)"""
+        try:
+            # Get selected items
+            selected_items = [item for item in self.download_queue if item.selected]
+            
+            if selected_items:
+                # Resume all selected paused items
+                resumed_count = 0
+                for item in selected_items:
+                    if item.status == "Paused" and item.downloader:
+                        item.downloader.resume()
+                        item.status = "Downloading"
+                        resumed_count += 1
+                
+                if resumed_count > 0:
+                    self._update_queue_display()
+                    self.status_label.configure(text=f"Resumed {resumed_count} selected item(s)", text_color="white")
+                    self.pause_btn.configure(state="normal")
+                    self.resume_btn.configure(state="disabled")
+                    print(f"▶ Resumed {resumed_count} selected item(s)")
+                else:
+                    messagebox.showinfo("Info", "No paused items selected to resume")
+            else:
+                # Fallback to current download behavior
+                if self.current_download and self.current_download.status == "Paused":
+                    if self.downloader:
+                        self.downloader.resume()
+                        self.downloader_paused = False
+                        self.current_download.status = "Downloading"
+                        self.status_label.configure(text="Downloading...", text_color="white")
+                        self.pause_btn.configure(state="normal")
+                        self.resume_btn.configure(state="disabled")
+                        self._update_queue_display()
+                else:
+                    messagebox.showinfo("Info", "No items selected and no paused download to resume")
+                    
+        except Exception as e:
+            messagebox.showerror("Resume Error", f"Failed to resume download: {str(e)}")
 
+    def cancel_current_download(self, confirm=True):
+        """Cancel the CURRENTLY ACTIVE download"""
+        try:
+            if self.current_download:
+                if confirm and not messagebox.askyesno("Confirm", "Cancel current download?"):
+                    return
+                
+                # Record in history
+                self.history_manager.add_record(
+                    url=self.current_download.url,
+                    filename=self.current_download.filename or os.path.basename(self.current_download.url),
+                    file_size=0,
+                    status="Cancelled",
+                    speed=0,
+                    error_msg="Download cancelled by user (main controls)"
+                )
+
+                self.current_download.status = "Cancelled"
+                if self.downloader:
+                    # Mark as paused to stop the downloader threads
+                    self.downloader.paused = True
+                self._download_item_finished()
+
+            # Update button states
+            self._update_main_button_states()
+
+        except Exception as e:
+            messagebox.showerror("Cancel Error", f"Failed to cancel download: {str(e)}")
+
+    def _update_main_button_states(self):
+        """Update main control button states based on selection and overall state"""
+        try:
+            # Get selected items
+            selected_items = [item for item in self.download_queue if item.selected]
+
+            # debug info
+            print(f"\n=== DEBUG: _update_main_button_states ===")
+            print(f"Total queue items: {len(self.download_queue)}")
+            print(f"Selected items: {len(selected_items)}")
+
+            for i,item in enumerate(self.download_queue):
+                print(f"[{i}] {item.filename[:20]}: status={item.status}, selected={item.selected}")
+            
+            if selected_items:
+                # Check what actions are possible on selected items
+                can_start = any(item.status == "Queued" for item in selected_items)
+                can_pause = any(item.status == "Downloading" for item in selected_items)
+                can_resume = any(item.status == "Paused" for item in selected_items)
+                can_cancel = any(item.status in ["Queued", "Downloading", "Paused"] 
+                               for item in selected_items)
+                
+                print(f"can_start={can_start}, can_pause={can_pause}, can_resume={can_resume}, can_cancel={can_cancel}")
+
+                # Update button states
+                self.start_btn.configure(state="normal" if can_start else "disabled")
+                self.pause_btn.configure(state="normal" if can_pause else "disabled")
+                self.resume_btn.configure(state="normal" if can_resume else "disabled")
+                self.cancel_btn.configure(state="normal" if can_cancel else "disabled")
+                
+                # Update selection info label
+                downloading = sum(1 for item in selected_items if item.status == "Downloading")
+                paused = sum(1 for item in selected_items if item.status == "Paused")
+                queued = sum(1 for item in selected_items if item.status == "Queued")
+                
+                info_text = f"Selected: {len(selected_items)} item(s)"
+                if downloading: info_text += f" | Downloading: {downloading}"
+                if paused: info_text += f" | Paused: {paused}"
+                if queued: info_text += f" | Queued: {queued}"
+                
+                if hasattr(self, 'selection_info_label'):
+                    self.selection_info_label.configure(text=info_text, text_color="#FFD700")
+            else:
+                # No selection - check overall state
+                queued_items = [item for item in self.download_queue if item.status == "Queued"]
+                downloading_items = [item for item in self.download_queue if item.status == "Downloading"]
+                paused_items = [item for item in self.download_queue if item.status == "Paused"]
+
+                print(f"No selection: queued={len(queued_items)}, downloading={len(downloading_items)}, paused={len(paused_items)}")
+                
+                # Enable buttons if there's something to do
+                self.start_btn.configure(state="normal" if queued_items else "disabled")
+                self.pause_btn.configure(state="normal" if downloading_items else "disabled")
+                self.resume_btn.configure(state="normal" if paused_items else "disabled")
+                self.cancel_btn.configure(state="normal" if downloading_items or paused_items else "disabled")
+
+            # Print final button states for debugging
+            start_state = self.start_btn.cget("state")
+            pause_state = self.pause_btn.cget("state")
+            resume_state = self.resume_btn.cget("state")
+            cancel_state = self.cancel_btn.cget("state")
+                
+            print(f"Button states: Start={start_state}, Pause={pause_state}, Resume={resume_state}, Cancel={cancel_state}")
+            print("=========================================\n")
+
+        except Exception as e:
+            print(f"Error updating button states: {e}")
+
+    def _select_all_items(self):
+        """Select all items in the queue"""
+        for item in self.download_queue:
+            item.selected = True
+        self._update_queue_display()
+        self._update_bulk_buttons_state()
+
+    def _deselect_all_items(self):
+        """Deselect all items in the queue"""
+        for item in self.download_queue:
+            item.selected = False
+        self._update_queue_display()
+        self._update_bulk_buttons_state()
+
+    def _pause_selected(self):
+        """Pause all selected downloads"""
+        selected_items = [item for item in self.download_queue if item.selected]
+        for item in selected_items:
+            if item.status == "Downloading" and item.downloader:
+                item.downloader.pause()
+                item.status = "Paused"
+        self._update_queue_display()
+        print(f"⏸ Paused {len(selected_items)} selected items")
+
+    def _resume_selected(self):
+        """Resume all selected downloads"""
+        selected_items = [item for item in self.download_queue if item.selected]
+        for item in selected_items:
+            if item.status == "Paused" and item.downloader:
+                item.downloader.resume()
+                item.status = "Downloading"
+        self._update_queue_display()
+        print(f"▶ Resumed {len(selected_items)} selected items")
+
+    def _cancel_selected(self):
+        """Cancel all selected downloads"""
+        selected_items = [item for item in self.download_queue if item.selected]
+        
+        if not selected_items:
+            return
+        
+        # Ask for confirmation
+        confirm = messagebox.askyesno(
+            "Confirm Cancel", 
+            f"Cancel {len(selected_items)} selected download(s)?"
+        )
+        
+        if not confirm:
+            return
+        
+        # Process each selected item
+        indices_to_remove = []
+        for i, item in enumerate(self.download_queue):
+            if item.selected:
+                if item.status in ["Downloading", "Paused"] and item.downloader:
+                    # Mark as cancelled
+                    item.downloader.paused = True  # Stop downloader
+                    item.status = "Cancelled"
+                    item.progress = 0
+                    
+                    # Record in history
+                    self.history_manager.add_record(
+                        url=item.url,
+                        filename=item.filename or os.path.basename(item.url),
+                        file_size=0,
+                        status="Cancelled",
+                        speed=0,
+                        error_msg="Cancelled by user (bulk)"
+                    )
+                    
+                    # If current download was cancelled, handle it
+                    if self.current_download == item:
+                        indices_to_remove.append(i)
+                        
+                elif item.status == "Queued":
+                    indices_to_remove.append(i)
+        
+        # Remove queued items (process in reverse to maintain indices)
+        for i in sorted(indices_to_remove, reverse=True):
+            if i < len(self.download_queue):
+                del self.download_queue[i]
+        
+        # If current download was cancelled, move to next
+        if any(self.current_download == item for item in selected_items):
+            self._download_item_finished()
+        
+        self._update_queue_display()
+        self._update_bulk_buttons_state()
+        print(f"✕ Cancelled {len(selected_items)} selected items")
+
+    def _update_bulk_buttons_state(self):
+        """Enable/disable bulk action buttons based on selection and status"""
+        selected_items = [item for item in self.download_queue if item.selected]
+        has_selected = len(selected_items) > 0
+        
+        # Check if any selected items can be paused/resumed/cancelled
+        can_pause = any(item.status == "Downloading" for item in selected_items)
+        can_resume = any(item.status == "Paused" for item in selected_items)
+        can_cancel = any(item.status in ["Queued", "Downloading", "Paused"] for item in selected_items)
+        
+        # Update button states
+        if hasattr(self, 'pause_selected_btn'):
+            self.pause_selected_btn.configure(state="normal" if has_selected and can_pause else "disabled")
+        
+        if hasattr(self, 'resume_selected_btn'):
+            self.resume_selected_btn.configure(state="normal" if has_selected and can_resume else "disabled")
+        
+        if hasattr(self, 'cancel_selected_btn'):
+            self.cancel_selected_btn.configure(state="normal" if has_selected and can_cancel else "disabled")
+
+    def test_selection_features(self):
+        """Test selection functionality"""
+        print("🧪 Testing selection features...")
+        
+        # Test 1: Click selection
+        print("1. Click on items to select/deselect")
+        print("   - Blue border should appear on selected items")
+        
+        # Test 2: Checkbox selection  
+        print("2. Use checkboxes to select/deselect")
+        print("   - Checkbox should toggle selection state")
+        
+        # Test 3: Select All / Deselect All
+        print("3. Test Select All / Deselect All buttons")
+        print("   - All items should be selected/deselected")
+        
+        # Test 4: Bulk button states
+        print("4. Bulk buttons should enable/disable based on selection")
+        print("   - Buttons disabled when nothing selected")
+        print("   - Buttons enabled when appropriate items selected")
+
+    def debug_check_methods(self):
+        """Check if all required methods exist"""
+        required_methods = [
+            '_pause_single_download',
+            '_resume_single_download', 
+            '_cancel_single_download',
+            '_select_all_items',
+            '_deselect_all_items',
+            '_pause_selected',
+            '_resume_selected',
+            '_cancel_selected',
+            '_update_bulk_buttons_state'
+        ]
+        
+        for method in required_methods:
+            if hasattr(self, method):
+                print(f"✅ {method} exists")
+            else:
+                print(f"❌ {method} is MISSING")
 
 if __name__ == "__main__":
     try:
