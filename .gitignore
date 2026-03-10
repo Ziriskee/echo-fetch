@@ -41,3 +41,5 @@ logs/
 *.tmp
 *.temp
 tests/desktop_echo.spec
+download_history.json
+src/EchoFetch.spec
