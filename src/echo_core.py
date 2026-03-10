@@ -209,10 +209,26 @@ class FastDownloader:
                         raise Exception("Server blocked download (403 Forbidden)")
 
                     r.raise_for_status()
+
+                    # Determine chunk size based on remaining part size
+                    part_size = end - start + 1
+                    if part_size > 1024 * 1024 * 1024:  # >1GB
+                        chunk_size = 1024 * 1024 * 4 # 4MB chunks for large files
+                    elif part_size > 500 * 1024 * 1024:  # >500MB
+                        chunk_size = 1024 * 1024 * 2 # 2MB chunks for medium files
+                    elif part_size > 100 * 1024 * 1024:  # >100MB
+                        chunk_size = 1024 * 1024 # 1MB chunks for smaller files
+                    elif part_size > 10 * 1024 * 1024:  # >10MB
+                        chunk_size = 1024 * 512 # 512KB chunks for small files
+                    elif part_size > 1 * 1024 * 1024:  # >1MB
+                        chunk_size = 1024 * 256 # 256KB chunks for very small files
+                    else:
+                        chunk_size = 1024 * 64 # 64KB chunks for tiny files
                     
                     with open(part_file, "ab") as f:
                         last_time = time.time()
                         last_downloaded = downloaded
+                        bytes_since_flush = 0 # Track bytes since last flush
                         
                         for chunk in r.iter_content(chunk_size=1024 * 16):
                             # Handle pause
@@ -224,6 +240,12 @@ class FastDownloader:
                                 
                             f.write(chunk)
                             downloaded += len(chunk)
+                            bytes_since_flush += len(chunk)
+
+                            # Flush to disk periodically to prevent data loss and reduce memory usage
+                            if bytes_since_flush >= 10*1024*1024:  # Flush every 10MB
+                                f.flush()
+                                bytes_since_flush = 0
                             
                             # Progress calculation
                             total_size = end - start + 1
@@ -244,6 +266,8 @@ class FastDownloader:
                             
                             if self.callback:
                                 self.callback(part_index, self.thread_speed[part_index], percent)
+                                
+                        f.flush()  # Final flush after download completes
                 
                 break  # Successfully completed
                 
@@ -264,11 +288,11 @@ class FastDownloader:
 
     def pause(self):
         self.paused = True
-        print("⏸ Download Paused.")
+        print("⏸ Download Paused: {self.filename}")
 
     def resume(self):
         self.paused = False
-        print("▶ Download Resumed.")
+        print("▶ Download Resumed: {self.filename}")
 
     def merge_parts(self):
         print("\n🔗 Merging downloaded parts...")

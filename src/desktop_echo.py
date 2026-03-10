@@ -1,3 +1,5 @@
+from tracemalloc import start
+
 import customtkinter as ctk
 import threading
 import queue
@@ -7,6 +9,9 @@ import uuid
 from tkinter import filedialog, messagebox
 import sys
 import os
+
+from matplotlib.pyplot import step
+from regex import T
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from echo_core import FastDownloader
@@ -16,6 +21,10 @@ import json
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+def log(msg):
+    with open("startup_log.txt", "a") as f:
+        f.write(f"{time.time():.3f} - {msg}\n")
 
 class DownloadItem:
     def __init__(self, url, download_path, filename=None):
@@ -41,21 +50,33 @@ class DownloadItem:
 
 class DownloadManagerUI(ctk.CTk):
     def __init__(self):
+        log("Starting application initialization")
+        total_start = time.time()
         super().__init__()
+        log("Super init completed")
+        step = time.time()  
+        print(f"Step 1: super init took {step - total_start:.3f}s")
+
         try:
             # Load settings
+            t = time.time()
             settings = self._load_settings()
+            print(f"Step 2: Load settings took {time.time() - t:.3f}s")
 
             # Apply saved theme
+            t = time.time()
             saved_theme = self.load_theme_preference()
             ctk.set_appearance_mode(saved_theme)
-            
+            print(f"Step 3: Apply theme took {time.time() - t:.3f}s")
+
             # Apply saved download folder
+            t = time.time()
             self.download_folder = settings.get('download_folder', os.path.expanduser("~/Downloads"))
     
             # 🔥 INITIALIZE DUPLICATE CHECK SETTINGS 🔥
             self.skip_duplicates_var = tk.BooleanVar(value=settings.get('skip_duplicates', False))
             self.auto_rename_var = tk.BooleanVar(value=settings.get('auto_rename', False))
+            print(f"Step 4: Load download folder and duplicate settings took {time.time() - t:.3f}s")
 
             saved_scale = settings.get('ui_scale',1.0)
             if saved_scale != 1.0:
@@ -65,12 +86,15 @@ class DownloadManagerUI(ctk.CTk):
                 except Exception as scale_error:
                     print(f"Failed to set UI scale: {scale_error}")
                     # Fallback to default scale
+            print(f"Step 5: Apply UI scale took {time.time() - t:.3f}s")
 
+            t = time.time()
             self.title("Echo-fetch")
             self.geometry("1250x740")
-                        
+            print(f"Step 6: Set window properties took {time.time() - t:.3f}s")
 
             # Initialize data structures
+            t = time.time()
             self.progress_queue = queue.Queue()
             self.download_queue = []
             self.current_download = None
@@ -80,10 +104,15 @@ class DownloadManagerUI(ctk.CTk):
             self.thread_speed = []
             self.thread_percents = []
             self.downloader_paused = False
+            print(f"Step 7: Initialize data structures took {time.time() - t:.3f}s") 
             
+            t = time.time()
             self._create_widgets()
+            print(f"Step 8: Create widgets took {time.time() - t:.3f}s")
+
             self.after(100, self.update_thread_display)
 
+            print(f"Total initialization time: {time.time() - total_start:.3f}s")
             print(f"Download folder set to: {self.download_folder}")
 
         except Exception as e:
@@ -559,14 +588,11 @@ class DownloadManagerUI(ctk.CTk):
         """Change UI scaling (requires restart)"""
         try:
             scale_map = {"80%": 0.8, "90%": 0.9, "100%": 1.0, "110%": 1.1, "120%": 1.2}
-            self._save_setting('ui_scale', scale_map[choice])
-
-            #save the setting
-            self.save_setting('ui_scale',selected_scale)
+            selected_scale = scale_map[choice]
+            self._save_setting('ui_scale', selected_scale)
 
             if hasattr(self, 'current_scale_label'):
                 self.current_scale_label.configure(text=f"Current Scale: {choice}")
-
 
             messagebox.showinfo("Restart Required", "UI scaling change will take effect after restart.")
 
@@ -1225,7 +1251,7 @@ class DownloadManagerUI(ctk.CTk):
                 clicked_widget = event.widget
 
                 # Don't allow selection of completed items
-                if item.status == "Completed":
+                if item.status in ["Completed", "Cancelled", "Error"]:
                     return
 
                 # Check if the clicked widget is a button or checkbox
@@ -1273,7 +1299,7 @@ class DownloadManagerUI(ctk.CTk):
             top_frame.pack(fill="x", pady=(0, 1))
             
             # ✅ SELECTION CHECKBOX
-            if item.status != "Completed":
+            if item.status in ["Queued", "Downloading", "Paused"]:
                 selection_var = ctk.BooleanVar(value=item.selected)
                 
                 # In _create_queue_item method, update the selection highlighting:
@@ -1303,6 +1329,7 @@ class DownloadManagerUI(ctk.CTk):
                 )
                 selection_cb.pack(side="left", padx=(0, 5))
                 selection_cb.bind("<Button-1>", lambda e: "break")  # Prevent frame click
+                item.selection_checkbox = selection_cb
             else:
                 # For completed items, add a placeholder to align
                 placeholder = ctk.CTkFrame(top_frame, text="", width=20)
@@ -1693,6 +1720,9 @@ class DownloadManagerUI(ctk.CTk):
                 item.error_message = error_message
                 item.progress = 0
                 item.end_time = datetime.now()
+
+                # Start next download if any
+                self._check_and_start_next_download()
                 
                 # Record error
                 self.history_manager.add_record(
@@ -1707,6 +1737,22 @@ class DownloadManagerUI(ctk.CTk):
             
                 # Move to next item or finish
             self.after(0, self._download_item_finished)
+
+    def generate_unique_filename(self, filename):
+        """Generate a unique filename by appending numbers if duplicate exists"""
+        try:
+            base, ext = os.path.splitext(filename)
+            counter = 1
+            new_filename = filename
+            
+            while os.path.exists(os.path.join(self.download_folder, new_filename)):
+                new_filename = f"{base}_{counter}{ext}"
+                counter += 1
+            
+            return new_filename
+        except Exception as e:
+            print(f"Error generating unique filename: {e}")
+            return filename
 
     def check_duplicate_file(self, filename, url=None):
         """Check if file already exists in download folder with settings"""
@@ -1966,32 +2012,55 @@ class DownloadManagerUI(ctk.CTk):
             return 0   
 
     def _download_item_finished(self):
-        """Handle completion of a download item"""
+        """Handle completion of a download item (success or error)"""
         try:
-            # Remove from active downloads if exists
-            if hasattr(self, 'active_downloads'):
-                # Keep only items that are still downloading or paused
-                self.active_downloads = [item for item in self.active_downloads 
-                                       if item.status in ["Downloading", "Paused"]]
+            # Clear thread display
+            self.thread_percents = []
+            self.thread_speed = []
             
-            # Update UI
-            self._update_queue_display()
+            # Hide all thread labels
+            for label in self.thread_labels:
+                label.pack_forget()
+            
+            # Clear current download references
+            self.current_download = None
+            self.downloader = None
             
             # Update status based on remaining active downloads
-            if hasattr(self, 'active_downloads') and self.active_downloads:
-                active_count = len([d for d in self.active_downloads if d.status == "Downloading"])
-                paused_count = len([d for d in self.active_downloads if d.status == "Paused"])
+            active_downloads = [item for item in self.download_queue 
+                              if item.status in ["Downloading", "Paused"]]
+            
+            if active_downloads:
+                active_count = len([d for d in active_downloads if d.status == "Downloading"])
+                paused_count = len([d for d in active_downloads if d.status == "Paused"])
                 
                 status_text = f"Active: {active_count} downloading"
                 if paused_count > 0:
                     status_text += f", {paused_count} paused"
                 self.status_label.configure(text=status_text, text_color="white")
+                
+                # Update current file info if there are active downloads
+                if active_count > 0:
+                    current_files = ", ".join([item.filename[:20] + "..." if len(item.filename) > 20 else item.filename 
+                                              for item in active_downloads[:2] if item.status == "Downloading"])
+                    if active_count > 2:
+                        current_files += f" (+{active_count - 2} more)"
+                    self.current_file_label.configure(text=f"Current: {current_files}")
+                else:
+                    self.current_file_label.configure(text="Current: None (paused)")
             else:
-                self.status_label.configure(text="All downloads completed", text_color="green")
+                # No active downloads
+                self.status_label.configure(text="Idle", text_color="green")
                 self.current_file_label.configure(text="Current: None")
+                
+                # Check if we should auto-start next download
+                self._check_and_start_next_download()
             
             # Update button states
             self._update_main_button_states()
+            
+            # Update queue display (this will refresh checkboxes, etc.)
+            self._update_queue_display()
             
         except Exception as e:
             print(f"Download finished error: {e}")
@@ -2100,7 +2169,7 @@ class DownloadManagerUI(ctk.CTk):
             messagebox.showerror("Pause Error", f"Failed to pause download: {str(e)}")
 
     def pause_download(self):
-        """Pause SELECTED downloads that are downloading, or all downloading if none selected"""
+        """Pause SELECTED downloads that are downloading"""
         try:
             selected_items = [item for item in self.download_queue if item.selected]
             
@@ -2109,9 +2178,17 @@ class DownloadManagerUI(ctk.CTk):
                 paused_count = 0
                 for item in selected_items:
                     if item.status == "Downloading" and item.downloader:
+                        # Ensure the downloader has a paused attribute
+                        if not hasattr(item.downloader, 'paused'):
+                            print(f"⚠ Downloader missing paused attribute: {item.filename}")
+                            # Add the attribute if missing
+                            item.downloader.paused = False
+                        
                         item.downloader.pause()
+                        item.downloader.paused = True  # Explicitly set to True
                         item.status = "Paused"
                         paused_count += 1
+                        print(f"⏸ Paused: {item.filename}")
                 
                 if paused_count > 0:
                     self._update_queue_display()
@@ -2125,11 +2202,14 @@ class DownloadManagerUI(ctk.CTk):
             else:
                 # If nothing selected, pause all active downloads
                 active_downloads = [item for item in self.download_queue 
-                                  if item.status == "Downloading"]
+                                if item.status == "Downloading"]
                 if active_downloads:
                     for item in active_downloads:
                         if item.downloader:
+                            if not hasattr(item.downloader, 'paused'):
+                                item.downloader.paused = False
                             item.downloader.pause()
+                            item.downloader.paused = True
                             item.status = "Paused"
                     self._update_queue_display()
                     self.status_label.configure(
@@ -2140,7 +2220,7 @@ class DownloadManagerUI(ctk.CTk):
                 else:
                     messagebox.showinfo("Info", "No active downloads to pause")
             
-            # Update the button states via the main method
+            # Update button states
             self._update_main_button_states()
                     
         except Exception as e:
@@ -2223,7 +2303,14 @@ class DownloadManagerUI(ctk.CTk):
                         
                         item.status = "Cancelled"
                         item.progress = 0
+
+                        # Remove from active downloads if present
+                        if hasattr(self, 'active_downloads') and item in self.active_downloads:
+                            self.active_downloads.remove(item)
+                            print(f"Removed {item.filename} from active downloads")
+
                         cancelled_count += 1
+                        print(f"✕ Cancelled: {item.filename}")
                 
                 if cancelled_count > 0:
                     self._update_queue_display()
@@ -2231,7 +2318,17 @@ class DownloadManagerUI(ctk.CTk):
                         text=f"Cancelled {cancelled_count} selected item(s)", 
                         text_color="red"
                     )
-                    print(f"✕ Cancelled {cancelled_count} selected item(s)")
+                    self._check_and_start_next_download()
+
+                    if not any(item.status == "Downloading" for item in self.download_queue):
+                        auto_start = self._load_setting('auto_start', False)
+                        if auto_start:
+                            queued_items = [item for item in self.download_queue if item.status == "Queued"]
+                            if queued_items:
+                                self.after(1000, lambda: self._start_download_item(queued_items[0]))
+                else:
+                    messagebox.showinfo("Info", "No cancellable items selected")
+                    
             else:
                 # If nothing selected, cancel all active downloads
                 active_items = [item for item in self.download_queue 
@@ -2242,6 +2339,7 @@ class DownloadManagerUI(ctk.CTk):
                                               f"Cancel {len(active_items)} active download(s)?"):
                         return
                     
+                    cancelled_count = 0
                     for item in active_items:
                         if item.downloader:
                             item.downloader.paused = True
@@ -2257,14 +2355,34 @@ class DownloadManagerUI(ctk.CTk):
                         
                         item.status = "Cancelled"
                         item.progress = 0
+
+                        # Remove from active downloads if present
+                        if hasattr(self, 'active_downloads') and item in self.active_downloads:
+                            self.active_downloads.remove(item)
+                            print(f"Removed {item.filename} from active downloads")
+
+                        cancelled_count += 1
+                        print(f"✕ Cancelled: {item.filename}")
                     
                     self._update_queue_display()
                     self.status_label.configure(
                         text=f"Cancelled {len(active_items)} active download(s)", 
                         text_color="red"
                     )
+
+                    self._check_and_start_next_download()
+
+                    if not any(item.status == "Downloading" for item in self.download_queue):
+                        auto_start = self._load_setting('auto_start', False)
+                        if auto_start:
+                            queued_items = [item for item in self.download_queue if item.status == "Queued"]
+                            if queued_items:
+                                self.after(1000, lambda: self._start_download_item(queued_items[0]))
+
                 else:
                     messagebox.showinfo("Info", "No active downloads to cancel")
+
+            self._update_main_button_states()
                     
         except Exception as e:
             messagebox.showerror("Cancel Error", f"Failed to cancel download: {str(e)}")
@@ -2332,7 +2450,7 @@ class DownloadManagerUI(ctk.CTk):
         self.after(100, self.update_thread_display)
     
     def resume_download(self):
-        """Resume SELECTED downloads (or current if none selected)"""
+        """Resume SELECTED paused downloads, or all paused if none selected"""
         try:
             # Get selected items
             selected_items = [item for item in self.download_queue if item.selected]
@@ -2340,65 +2458,138 @@ class DownloadManagerUI(ctk.CTk):
             if selected_items:
                 # Resume all selected paused items
                 resumed_count = 0
+                failed_count = 0
+
                 for item in selected_items:
                     if item.status == "Paused" and item.downloader:
-                        item.downloader.resume()
-                        item.status = "Downloading"
-                        resumed_count += 1
-                
+                        try:    
+                            # Check if downloader is actually paused
+                            if hasattr(item.downloader, 'paused') and item.downloader.paused:
+                                item.downloader.resume()
+                                item.status = "Downloading"
+                                item.downloader.paused = False
+                                resumed_count += 1
+                                print(f"▶ Resumed: {item.filename}")
+                            else:
+                                print(f"⚠️ Downloader not paused or no paused attribute for: {item.filename}")
+                                failed_count += 1
+                        except Exception as e:
+                            print(f"Error resuming {item.filename}: {e}")
+                            item.error_message = f"Resume error: {e}"
+                            failed_count += 1
+
+                    elif item.status == "Paused" and not item.downloader:
+                        print(f"⚠️ No downloader instance for paused item: {item.filename}")
+                        # Try to restart the download from scratch
+                        try:
+                            print(f"🔄 Restarting download: {item.filename}")
+                            # Change status back to Queued so it can be started again
+                            item.status = "Queued"
+                            item.progress = 0
+                            # Remove from active downloads if present
+                            if hasattr(self, 'active_downloads') and item in self.active_downloads:
+                                self.active_downloads.remove(item)
+                            resumed_count += 1
+                        except Exception as e:
+                            print(f"❌ Failed to restart: {e}")
+                            failed_count += 1
+
                 if resumed_count > 0:
                     self._update_queue_display()
-                    self.status_label.configure(text=f"Resumed {resumed_count} selected item(s)", text_color="white")
-                    self.pause_btn.configure(state="normal")
-                    self.resume_btn.configure(state="disabled")
+                    self.status_label.configure(
+                        text=f"Resumed {resumed_count} selected item(s)", 
+                        text_color="white"
+                    )
                     print(f"▶ Resumed {resumed_count} selected item(s)")
+
+                    # If any failed to resume, show a warning
+                    if failed_count > 0:
+                        messagebox.showinfo("Partial Success",
+                                            f"Resumed {resumed_count} items, but {failed_count} failed to resume.")
+
                 else:
                     messagebox.showinfo("Info", "No paused items selected to resume")
             else:
-                # Fallback to current download behavior
-                if self.current_download and self.current_download.status == "Paused":
-                    if self.downloader:
-                        self.downloader.resume()
-                        self.downloader_paused = False
-                        self.current_download.status = "Downloading"
-                        self.status_label.configure(text="Downloading...", text_color="white")
-                        self.pause_btn.configure(state="normal")
-                        self.resume_btn.configure(state="disabled")
+                # If nothing selected, resume all paused downloads
+                paused_items = [item for item in self.download_queue 
+                            if item.status == "Paused"]
+                
+                if paused_items:
+                    resumed_count = 0
+                    failed_count = 0
+
+
+                    for item in paused_items:
+                        if item.downloader:
+                            try:
+                                if hasattr(item.downloader, 'paused') and item.downloader.paused:    
+                                    item.downloader.resume()
+                                    item.status = "Downloading"
+                                    resumed_count += 1
+                                    print(f"▶ Resumed: {item.filename}")
+                                else:
+                                    print(f"⚠️ Downloader not paused or no paused attribute for: {item.filename}")
+                                    failed_count += 1
+                            except Exception as e:
+                                print(f"Error resuming {item.filename}: {e}")
+                                item.error_message = f"Resume error: {e}"
+                                failed_count += 1
+                        else:
+                            print(f"⚠️ No downloader instance for paused item: {item.filename}")
+                            # Try to restart the download from scratch
+                            try:
+                                print(f"🔄 Restarting download: {item.filename}")
+                                # Change status back to Queued so it can be started again
+                                item.status = "Queued"
+                                item.progress = 0
+                                # Remove from active downloads if present
+                                if hasattr(self, 'active_downloads') and item in self.active_downloads:
+                                    self.active_downloads.remove(item)
+                                resumed_count += 1
+                            except Exception as e:
+                                print(f"❌ Failed to restart: {e}")
+                                failed_count += 1
+                        
+                    if resumed_count > 0:
                         self._update_queue_display()
+                        self.status_label.configure(
+                            text=f"Resumed {resumed_count} paused item(s)", 
+                            text_color="white"
+                        )
+                        print(f"▶ Resumed {resumed_count} paused item(s)")
+
+                        if failed_count > 0:
+                            messagebox.showinfo("Partial Success",
+                                                f"Resumed {resumed_count} items, but {failed_count} failed to resume.")
+
+                    else:
+                        messagebox.showinfo("Info", "No paused downloads to resume")
                 else:
-                    messagebox.showinfo("Info", "No items selected and no paused download to resume")
+                    messagebox.showinfo("Info", "No paused downloads to resume")
+            
+            # Update button states using centralized method
+            self._update_main_button_states()
                     
         except Exception as e:
             messagebox.showerror("Resume Error", f"Failed to resume download: {str(e)}")
 
-    def cancel_current_download(self, confirm=True):
-        """Cancel the CURRENTLY ACTIVE download"""
+    def _check_and_start_next_download(self):
+        """Check if auto-start is enabled and start next queued download"""
         try:
-            if self.current_download:
-                if confirm and not messagebox.askyesno("Confirm", "Cancel current download?"):
-                    return
-                
-                # Record in history
-                self.history_manager.add_record(
-                    url=self.current_download.url,
-                    filename=self.current_download.filename or os.path.basename(self.current_download.url),
-                    file_size=0,
-                    status="Cancelled",
-                    speed=0,
-                    error_msg="Download cancelled by user (main controls)"
-                )
-
-                self.current_download.status = "Cancelled"
-                if self.downloader:
-                    # Mark as paused to stop the downloader threads
-                    self.downloader.paused = True
-                self._download_item_finished()
-
-            # Update button states
-            self._update_main_button_states()
-
+            # Check if there are any downloads running
+            if not any(item.status == "Downloading" for item in self.download_queue):
+                # Check if auto-start is enabled
+                auto_start = self._load_setting('auto_start', False)
+                if auto_start:
+                    queued_items = [item for item in self.download_queue if item.status == "Queued"]
+                    if queued_items:
+                        print(f"🔄 Auto-starting next download: {queued_items[0].filename}")
+                        self.after(1000, lambda: self._start_download_item(queued_items[0]))
+                        return True
+            return False
         except Exception as e:
-            messagebox.showerror("Cancel Error", f"Failed to cancel download: {str(e)}")
+            print(f"Error in auto-start check: {e}")
+            return False
 
     def _update_main_button_states(self):
         """Update main control button states based on selection and overall state"""
@@ -2578,27 +2769,6 @@ class DownloadManagerUI(ctk.CTk):
         if hasattr(self, 'cancel_selected_btn'):
             self.cancel_selected_btn.configure(state="normal" if has_selected and can_cancel else "disabled")
 
-    def test_selection_features(self):
-        """Test selection functionality"""
-        print("🧪 Testing selection features...")
-        
-        # Test 1: Click selection
-        print("1. Click on items to select/deselect")
-        print("   - Blue border should appear on selected items")
-        
-        # Test 2: Checkbox selection  
-        print("2. Use checkboxes to select/deselect")
-        print("   - Checkbox should toggle selection state")
-        
-        # Test 3: Select All / Deselect All
-        print("3. Test Select All / Deselect All buttons")
-        print("   - All items should be selected/deselected")
-        
-        # Test 4: Bulk button states
-        print("4. Bulk buttons should enable/disable based on selection")
-        print("   - Buttons disabled when nothing selected")
-        print("   - Buttons enabled when appropriate items selected")
-
     def debug_check_methods(self):
         """Check if all required methods exist"""
         required_methods = [
@@ -2618,6 +2788,32 @@ class DownloadManagerUI(ctk.CTk):
                 print(f"✅ {method} exists")
             else:
                 print(f"❌ {method} is MISSING")
+
+    def debug_resume_issue(self):
+        """Debug why resume isn't working"""
+        print("\n" + "="*60)
+        print("DEBUG RESUME ISSUE")
+        print("="*60)
+        
+        # Check all items
+        for i, item in enumerate(self.download_queue):
+            print(f"\n[{i}] '{item.filename[:30]}...'")
+            print(f"    Status: {item.status}")
+            print(f"    Selected: {item.selected}")
+            print(f"    Has downloader: {item.downloader is not None}")
+            if item.downloader:
+                print(f"    Downloader paused attr: {getattr(item.downloader, 'paused', 'NO PAUSED ATTR')}")
+                print(f"    Downloader threads: {getattr(item.downloader, 'num_threads', 'N/A')}")
+        
+        # Check paused items
+        paused_items = [item for item in self.download_queue if item.status == "Paused"]
+        print(f"\nTotal paused items: {len(paused_items)}")
+        
+        # Check selected paused items
+        selected_paused = [item for item in paused_items if item.selected]
+        print(f"Selected paused items: {len(selected_paused)}")
+        
+        print("="*60 + "\n")
 
 if __name__ == "__main__":
     try:
