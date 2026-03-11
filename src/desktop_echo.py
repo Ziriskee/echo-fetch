@@ -19,6 +19,18 @@ from datetime import datetime
 from download_history import DownloadHistory
 import json
 
+# Default categories for auto‑categorization
+DEFAULT_CATEGORIES = {
+    "Images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp"],
+    "Documents": [".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".xls", ".xlsx", ".ppt", ".pptx"],
+    "Videos": [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm"],
+    "Music": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"],
+    "Archives": [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"],
+    "Programs": [".exe", ".msi", ".deb", ".rpm", ".app", ".dmg"],
+    "Others": []  # catch‑all
+}
+
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -72,6 +84,7 @@ class DownloadManagerUI(ctk.CTk):
             # Apply saved download folder
             t = time.time()
             self.download_folder = settings.get('download_folder', os.path.expanduser("~/Downloads"))
+            self.download_folder = os.path.normpath(self.download_folder)
     
             # 🔥 INITIALIZE DUPLICATE CHECK SETTINGS 🔥
             self.skip_duplicates_var = tk.BooleanVar(value=settings.get('skip_duplicates', False))
@@ -98,7 +111,11 @@ class DownloadManagerUI(ctk.CTk):
             self.progress_queue = queue.Queue()
             self.download_queue = []
             self.current_download = None
+            
+            # Initialize history manager directly
+            from download_history import DownloadHistory
             self.history_manager = DownloadHistory()
+           
 
             # Tracking variables
             self.thread_speed = []
@@ -421,6 +438,20 @@ class DownloadManagerUI(ctk.CTk):
                                         command=self.toggle_auto_remove)
             auto_remove_cb.pack(anchor="w", pady=5)
             
+            # Auto‑categorization Section
+            categorize_frame = ctk.CTkFrame(parent)
+            categorize_frame.pack(fill="x", padx=10, pady=10)
+
+            ctk.CTkLabel(categorize_frame, text="Auto‑Categorization", 
+                        font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+
+            self.auto_categorize_var = ctk.BooleanVar(value=self._load_setting('auto_categorize', False))
+            auto_categorize_cb = ctk.CTkCheckBox(categorize_frame, 
+                                                text="Automatically sort downloads into folders by type",
+                                                variable=self.auto_categorize_var,
+                                                command=self.toggle_auto_categorize)
+            auto_categorize_cb.pack(anchor="w", pady=5)
+
             # Default thread count
             thread_frame = ctk.CTkFrame(behavior_frame, fg_color="transparent")
             thread_frame.pack(fill="x", pady=10)
@@ -461,6 +492,63 @@ class DownloadManagerUI(ctk.CTk):
             
         except Exception as e:
             print(f"Download tab error: {e}")
+
+    def toggle_auto_categorize(self):
+        self._save_setting('auto_categorize', self.auto_categorize_var.get())
+
+    def _categorize_file(self, item):
+        """Move downloaded file to a category subfolder based on its extension."""
+        item_download_path = os.path.normpath(item.download_path)
+        filepath = os.path.join(item_download_path, item.filename)
+
+        if not self._load_setting('auto_categorize', False):
+            return False
+
+        filepath = os.path.join(item.download_path, item.filename)
+        if not os.path.exists(filepath):
+            print(f"File not found for categorization: {filepath}")
+            return False
+
+        # Get file extension (lowercase)
+        ext = os.path.splitext(item.filename)[1].lower()
+        
+        # Find category
+        category = "Others"
+        for cat, exts in DEFAULT_CATEGORIES.items():
+            if ext in exts:
+                category = cat
+                break
+
+        # Create category folder if needed
+        category_folder = os.path.join(item.download_path, category)
+        os.makedirs(category_folder, exist_ok=True)
+
+        # New file path
+        new_path = os.path.join(category_folder, item.filename)
+
+        # Handle name conflict: if file already exists, add a number suffix
+        if os.path.exists(new_path):
+            base, ext = os.path.splitext(item.filename)
+            counter = 1
+            while os.path.exists(os.path.join(category_folder, f"{base}_{counter}{ext}")):
+                counter += 1
+            new_path = os.path.join(category_folder, f"{base}_{counter}{ext}")
+
+        try:
+            import shutil
+            shutil.move(filepath, new_path)
+            print(f"Moved {item.filename} to {category} folder")
+
+            # Update item's download path and filename
+            item.download_path = category_folder
+            item.filename = os.path.basename(new_path)
+            # Optionally update history record? The history already stores the original path, but we could update it.
+            # For now, we'll just update the item so the queue displays the correct location.
+            self._update_queue_display()
+            return True
+        except Exception as e:
+            print(f"Failed to move file: {e}")
+            return False
 
     def toggle_auto_rename(self):
         self._save_setting('auto_rename', self.auto_rename_var.get())
@@ -867,11 +955,6 @@ class DownloadManagerUI(ctk.CTk):
             self.thread_scrollable_frame.pack(fill="both", expand=True, padx=5, pady=5)
             
             self.thread_labels = []
-            for i in range(16):
-                lbl = ctk.CTkLabel(self.thread_scrollable_frame, text="", text_color="gray", font=ctk.CTkFont(size=11))
-                lbl.pack(anchor="w", pady=1)
-                self.thread_labels.append(lbl)
-                lbl.pack_forget()
         except Exception as e:
             messagebox.showerror("UI Error", f"Failed to create download section: {str(e)}")
 
@@ -1250,44 +1333,40 @@ class DownloadManagerUI(ctk.CTk):
             def handle_frame_click(event):
                 clicked_widget = event.widget
 
-                # Don't allow selection of completed items
+                # Don't allow selection of completed/cancelled/error items
                 if item.status in ["Completed", "Cancelled", "Error"]:
                     return
 
-                # Check if the clicked widget is a button or checkbox
-                is_button_or_checkbox = False
-
-               # check if clicked widget is the checkbox
-                if clicked_widget == selection_cb._canvas or clicked_widget == selection_cb:
-                    return
+                # Check if the clicked widget is the checkbox (if it exists)
+                if item.selection_checkbox is not None:
+                    if clicked_widget == item.selection_checkbox._canvas or clicked_widget == item.selection_checkbox:
+                        return
 
                 # Check if clicked widget is one of the buttons
+                is_button_or_checkbox = False
                 for btn in btn_frame.winfo_children():
                     if clicked_widget == btn or clicked_widget == btn._canvas:
                         is_button_or_checkbox = True
                         break
 
-                # Toggle selection only if not clicking on button/checkbox
                 if not is_button_or_checkbox:
                     item.selected = not item.selected
-                    # update the checkbox  to match item's selection state
-                    if hasattr(item, 'selection_checkbox') and item.selection_checkbox:
-                        selection_var.set(item.selected)
+                    # Update checkbox if it exists
+                    if item.selection_checkbox is not None:
+                        item.selection_checkbox.select() if item.selected else item.selection_checkbox.deselect()
 
-                    # Visual feedback for selection
+                    # Visual feedback
                     if item.selected:
-                        # Highlight selected items with gold border
                         item_frame.configure(border_width=2, border_color="#FFD700")
-                        filename_label.configure(font=ctk.CTkFont(size=11))
+                        filename_label.configure(font=ctk.CTkFont(size=11, weight="bold"))
                     else:
                         item_frame.configure(border_width=0)
                         filename_label.configure(font=ctk.CTkFont(size=11, weight="normal"))
-                    # Also highlight if this is the current active download
+
                     if item == self.current_download:
-                        item_frame.configure(border_width=1, border_color="#3B8ED0")  # Blue for current
+                        item_frame.configure(border_width=1, border_color="#3B8ED0")
 
                     self._update_queue_display()
-            
             item_frame.bind("<Button-1>", handle_frame_click)
             
             # Content frame
@@ -1332,10 +1411,11 @@ class DownloadManagerUI(ctk.CTk):
                 item.selection_checkbox = selection_cb
             else:
                 # For completed items, add a placeholder to align
-                placeholder = ctk.CTkFrame(top_frame, text="", width=20)
+                placeholder = ctk.CTkLabel(top_frame, text="", width=20)
                 placeholder.pack(side="left", padx=(0, 5))
-                item.selection_checkbox = None # No checkbox for completed items
-                
+                item.selection_checkbox = None  # No checkbox for completed items
+                selection_cb = None  # Set to None for else branch
+            
             # Filename (expanded area)
             filename = item.filename or os.path.basename(item.url) or "Unknown File"
             display_filename = filename[:40] + "..." if len(filename) > 40 else filename
@@ -1449,7 +1529,7 @@ class DownloadManagerUI(ctk.CTk):
             
             # Store references for later
             item.ui_frame = item_frame
-            item.selection_checkbox = selection_cb
+            # selection_checkbox is already set in the if/else blocks above
             
             # Apply visual selection state
             if item.selected:
@@ -1622,7 +1702,7 @@ class DownloadManagerUI(ctk.CTk):
             
             # Update UI with thread count
             self.after(0, lambda: self._update_thread_labels_visibility(num_threads))
-            
+            self.after(0, lambda: self._ensure_thread_labels(downloader.num_threads))
             # Start download
             downloader.start()
 
@@ -1705,6 +1785,7 @@ class DownloadManagerUI(ctk.CTk):
                 item.status = "Completed"
                 item.progress = 100
                 item.end_time = datetime.now()
+                self.after(0, lambda: self._categorize_file(item))
                 
                 # Record successful completion
                 self.history_manager.add_record(
@@ -2062,6 +2143,8 @@ class DownloadManagerUI(ctk.CTk):
             # Update queue display (this will refresh checkboxes, etc.)
             self._update_queue_display()
             
+            self._ensure_thread_labels(0)   # hides all thread labels
+
         except Exception as e:
             print(f"Download finished error: {e}")
 
@@ -2085,6 +2168,27 @@ class DownloadManagerUI(ctk.CTk):
                     label.pack_forget()
         except Exception as e:
             print(f"Thread label update error: {e}")
+
+    def _ensure_thread_labels(self, needed):
+        """Make sure we have at least 'needed' thread labels, creating them on demand."""
+        # Create new labels if we don't have enough
+        while len(self.thread_labels) < needed:
+            lbl = ctk.CTkLabel(
+                self.thread_scrollable_frame,
+                text="",
+                text_color="gray",
+                font=ctk.CTkFont(size=11)
+            )
+            lbl.pack(anchor="w", pady=1)
+            self.thread_labels.append(lbl)
+        
+        # Show the first 'needed' labels, hide any extras
+        for i, lbl in enumerate(self.thread_labels):
+            if i < needed:
+                # Make sure it's visible (pack it again if hidden)
+                lbl.pack(anchor="w", pady=1)
+            else:
+                lbl.pack_forget()
 
     def start_download(self):
 
@@ -2226,53 +2330,6 @@ class DownloadManagerUI(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Pause Error", f"Failed to pause download: {str(e)}")
 
-    def resume_download(self):
-        """Resume SELECTED downloads that are paused"""
-        try:
-            selected_items = [item for item in self.download_queue if item.selected]
-            
-            if selected_items:
-                # Resume all selected paused items
-                resumed_count = 0
-                for item in selected_items:
-                    if item.status == "Paused" and item.downloader:
-                        item.downloader.resume()
-                        item.status = "Downloading"
-                        resumed_count += 1
-                
-                if resumed_count > 0:
-                    self._update_queue_display()
-                    self.status_label.configure(
-                        text=f"Resumed {resumed_count} selected item(s)", 
-                        text_color="white"
-                    )
-                    print(f"▶ Resumed {resumed_count} selected item(s)")
-                else:
-                    messagebox.showinfo("Info", "No paused items selected to resume")
-            else:
-                # If nothing selected, resume paused downloads
-                paused_items = [item for item in self.download_queue 
-                               if item.status == "Paused"]
-                if paused_items:
-                    for item in paused_items:
-                        if item.downloader:
-                            item.downloader.resume()
-                            item.status = "Downloading"
-                    self._update_queue_display()
-                    self.status_label.configure(
-                        text=f"Resumed {len(paused_items)} paused item(s)", 
-                        text_color="white"
-                    )
-                    print(f"▶ Resumed {len(paused_items)} paused item(s)")
-                else:
-                    messagebox.showinfo("Info", "No paused downloads to resume")
-            
-            # Update button states
-            self._update_main_button_states()
-
-        except Exception as e:
-            messagebox.showerror("Resume Error", f"Failed to resume download: {str(e)}")
-
     def cancel_current_download(self):
         """Cancel SELECTED downloads (or current if none selected)"""
         try:
@@ -2390,6 +2447,12 @@ class DownloadManagerUI(ctk.CTk):
     def update_thread_display(self):
         """Update the UI with current progress and speeds"""
         try:
+            # Determine how many threads are active
+            active_threads = len(self.thread_percents)
+
+            # Ensure we have enough thread labels (creates them if needed)
+            self._ensure_thread_labels(active_threads)
+
             # Process queued progress updates
             while not self.progress_queue.empty():
                 try:
@@ -2412,16 +2475,19 @@ class DownloadManagerUI(ctk.CTk):
                             self.current_download.progress = percent
                             self.current_download.speed = speed
                         
-                        # Update thread label
-                        if idx < len(self.thread_labels):
-                            bar_length = 15
-                            filled = int(percent / 100 * bar_length)
-                            bar = "█" * filled + "░" * (bar_length - filled)
-                            status = f"Thread {idx+1}: {speed:5.2f} MB/s ({percent:5.1f}%) {bar}"
-                            self.thread_labels[idx].configure(text=status)
-                            
                 except queue.Empty:
                     break
+
+            # Update all thread labels based on current arrays
+            for i in range(active_threads):
+                if i < len(self.thread_labels):
+                    speed = self.thread_speed[i] if i < len(self.thread_speed) else 0
+                    percent = self.thread_percents[i] if i < len(self.thread_percents) else 0
+                    bar_length = 15
+                    filled = int(percent / 100 * bar_length) if percent else 0
+                    bar = "█" * filled + "░" * (bar_length - filled)
+                    status = f"Thread {i+1}: {speed:5.2f} MB/s ({percent:5.1f}%) {bar}"
+                    self.thread_labels[i].configure(text=status)
 
             # Update overall progress
             if self.thread_percents:
@@ -2448,7 +2514,7 @@ class DownloadManagerUI(ctk.CTk):
 
         # Schedule next update
         self.after(100, self.update_thread_display)
-    
+
     def resume_download(self):
         """Resume SELECTED paused downloads, or all paused if none selected"""
         try:

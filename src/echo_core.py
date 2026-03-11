@@ -1,8 +1,9 @@
+from fileinput import filename
+
 import requests
 import threading
 import os
 import re
-import psutil
 import time
 
 MAX_RETRIES = 10
@@ -152,6 +153,7 @@ class FastDownloader:
             print(f"{'❌' if level == 'error' else '⚠'} {message}")
 
     def choose_optimal_threads(self, file_size_bytes, default_threads):
+        import psutil
         """Choose optimal thread count based on file size and system capabilities"""
         if file_size_bytes == 0:
             return 1
@@ -266,7 +268,7 @@ class FastDownloader:
                             
                             if self.callback:
                                 self.callback(part_index, self.thread_speed[part_index], percent)
-                                
+
                         f.flush()  # Final flush after download completes
                 
                 break  # Successfully completed
@@ -391,7 +393,9 @@ class FastDownloader:
                 start_time = time.time()
                 last_update = start_time
                 
-                with open(self.filename, "wb") as f:
+
+                output_file = os.path.join(self.download_path,self.filename) if self.download_path else self.filename
+                with open(output_file, "wb") as f:
                     for chunk in r.iter_content(chunk_size=1024 * 64):
                         while self.paused:
                             time.sleep(0.1)
@@ -458,8 +462,8 @@ class FastDownloader:
                         final_path = os.path.join(self.download_path, self.filename) if self.download_path else self.filename
                         
                         # Verify download size
-                        if os.path.exists(self.filename):
-                            final_size = os.path.getsize(self.filename)
+                        if os.path.exists(final_path):
+                            final_size = os.path.getsize(final_path)
                             if self.file_size > 0 and final_size != self.file_size:
                                 print(f"❌ Size mismatch! Expected: {self.file_size}, Got: {final_size}")
                                 print("→ Re-downloading in single-thread mode...")
