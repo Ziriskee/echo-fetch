@@ -1,0 +1,240 @@
+LANG = {
+    # App
+    'app_title': 'Echo-fetch',
+    
+    # Main Window
+    'download_folder': 'Download Folder:',
+    'browse': 'Browse',
+    'download_url': 'Download URL:',
+    'batch_download': 'Batch Download (one URL per line):',
+    'add_all_to_queue': 'Add All to Queue',
+    
+    # Buttons
+    'add_to_queue': 'Add to Queue',
+    'start_download': 'Start Download',
+    'pause': 'Pause',
+    'resume': 'Resume',
+    'cancel': 'Cancel',
+    
+    # Queue Section
+    'download_queue': 'Download Queue',
+    'downloads': 'Downloads:',
+    'select_all': 'Select All',
+    'deselect_all': 'Deselect All',
+    'pause_selected': 'Pause Selected',
+    'resume_selected': 'Resume Selected',
+    'cancel_selected': 'Cancel Selected',
+    'clear_completed': 'Clear Completed',
+    'clear_all': 'Clear All',
+    
+    # Status
+    'idle': 'Idle',
+    'status_downloading': 'Downloading',
+    'status_paused': 'Paused',
+    'status_completed': 'Completed',
+    'status_error': 'Error',
+    'status_cancelled': 'Cancelled',
+    'status_queued': 'Queued',
+    'active': 'Active: {} downloading',
+    'active_with_paused': 'Active: {} downloading, {} paused',
+    'no_items_selected': 'No items selected',
+    'selected_info': 'Selected: {} item(s)',
+    'selected_downloading': 'Selected: {} item(s) | Downloading: {}',
+    'selected_paused': 'Selected: {} item(s) | Paused: {}',
+    'selected_queued': 'Selected: {} item(s) | Queued: {}',
+    'selected_mixed': 'Selected: {} | Downloading: {} | Paused: {} | Queued: {}',
+    
+    # Progress
+    'overall': 'Overall: {}%',
+    'speed': 'Speed: {:.2f} MB/s',
+    'current': 'Current: {}',
+    'current_none': 'Current: None',
+    'current_paused': 'Current: None (paused)',
+    'thread_status': 'Thread Status:',
+    
+    # History & Stats
+    'history_stats': 'History & Stats',
+    'statistics': 'Statistics',
+    'recent_downloads': 'Recent Downloads',
+    'export': 'Export',
+    'last_30_days': 'Last 30 Days Statistics',
+    'total_downloads': 'Total Downloads',
+    'successful': 'Successful',
+    'failed': 'Failed',
+    'success_rate': 'Success Rate',
+    'total_size': 'Total Size',
+    'average_speed': 'Average Speed',
+    'no_history': 'No download history yet',
+    'export_csv': 'Export to CSV',
+    'cleanup_files': 'Cleanup Downloaded Files',
+    'clear_history': 'Clear History',
+    'total_records': 'Total records: {}',
+    
+    # Preferences
+    'preferences': 'Preferences',
+    'appearance': 'Appearance',
+    'download_settings': 'Download',
+    'general': 'General',
+    
+    # Appearance Tab
+    'theme_settings': 'Theme Settings',
+    'current_theme': 'Current Theme: {}',
+    'toggle_theme': 'Toggle Dark/Light Theme',
+    'or_select': 'Or select:',
+    'ui_scaling': 'UI Scaling',
+    'ui_scaling_desc': 'Adjust UI scaling (requires restart):',
+    
+    # Download Tab
+    'download_location': 'Download Location',
+    'current_folder': 'Current folder:',
+    'change_folder': 'Change Download Folder',
+    'download_behavior': 'Download Behavior',
+    'auto_start': 'Auto-start downloads when added to queue',
+    'auto_remove': 'Auto-remove completed downloads from queue',
+    'auto_categorize': 'Auto-Categorization',
+    'auto_categorize_desc': 'Automatically sort downloads into folders by type',
+    'default_threads': 'Default Threads:',
+    'duplicate_handling': 'Duplicate File Handling',
+    'auto_rename_dup': 'Auto-rename duplicate files (no prompt)',
+    'auto_skip_dup': 'Auto-skip duplicate files',
+    
+    # General Tab
+    'startup': 'Startup',
+    'start_with_system': 'Start with system (Windows)',
+    'language': 'Language',
+    'minimize_tray': 'Minimize to system tray',
+    'notifications': 'Notifications',
+    'notify_complete': 'Show notifications when downloads complete',
+    'sound_notif': 'Play sound for notifications',
+    'reset_maintenance': 'Reset & Maintenance',
+    'reset_settings': 'Reset All Settings',
+    'clear_data': 'Clear All Data',
+    
+    # Cleanup Window
+    'cleanup_files_title': 'Cleanup Downloaded Files',
+    'select_files_delete': 'Select files to delete:',
+    'delete_selected': 'Delete Selected',
+    'file_not_found': 'File not found',
+    
+    # Messages - Warnings
+    'warning': 'Warning',
+    'invalid_url': 'Invalid URL',
+    'invalid_url_msg': 'Please enter a valid HTTP/HTTPS URL',
+    'enter_url': 'Please enter a URL',
+    'enter_batch_urls': 'Please enter URLs in the batch box',
+    'no_queued': 'No queued items to download',
+    'cannot_clear_downloading': 'Cannot clear queue while download is in progress',
+    'queue_already_empty': 'Queue is already empty',
+    'no_active_downloads': 'No active downloads to cancel',
+    'no_paused_downloads': 'No paused downloads to resume',
+    'no_downloading_pause': 'No active downloads to pause',
+    
+    # Messages - Success/Info
+    'success': 'Success',
+    'added_to_queue': 'Added to queue: {}',
+    'batch_result': 'Added {} URLs to queue',
+    'queue_cleared': 'Queue Cleared',
+    'removed_completed': 'Removed {} completed items from queue',
+    'no_completed_remove': 'No completed items to remove',
+    'all_items_removed': 'All items removed from queue',
+    'history_cleared': 'Download history has been cleared',
+    'settings_reset': 'All settings have been reset to defaults.',
+    'restart_required': 'Restart Required',
+    'scale_restart': 'UI scaling change will take effect after restart.',
+    'lang_restart': 'Language change will take effect after restart.',
+    'export_success': 'History exported to {}',
+    'files_deleted': 'Successfully deleted {} file(s)',
+    'history_files_cleared': 'Download history cleared and {} files deleted',
+    'data_cleared': 'All application data has been cleared.\nDeleted {} downloaded files.',
+    'partial_resume': 'Resumed {} items, but {} failed to resume.',
+    
+    # Messages - Errors
+    'error': 'Error',
+    'init_error': 'Initialization Error',
+    'init_error_msg': 'Failed to initialize application: {}',
+    'ui_error': 'UI Error',
+    'ui_error_msg': 'Failed to create widgets: {}',
+    'queue_error': 'Queue Error',
+    'queue_error_msg': 'Failed to add URL to queue: {}',
+    'batch_error': 'Batch Error',
+    'batch_error_msg': 'Failed to add batch URLs: {}',
+    'download_error': 'Download Error',
+    'download_error_msg': 'Failed to start download item: {}',
+    'pause_error': 'Pause Error',
+    'pause_error_msg': 'Failed to pause download: {}',
+    'resume_error': 'Resume Error',
+    'resume_error_msg': 'Failed to resume download: {}',
+    'cancel_error': 'Cancel Error',
+    'cancel_error_msg': 'Failed to cancel download: {}',
+    'theme_error': 'Theme Error',
+    'theme_error_msg': 'Failed to switch theme: {}',
+    'scale_error': 'Scale Error',
+    'scale_error_msg': 'Failed to change UI scale: {}',
+    'folder_error': 'Folder Selection Error',
+    'folder_error_msg': 'Failed to select folder: {}',
+    'preferences_error': 'Preferences Error',
+    'preferences_error_msg': 'Failed to open preferences: {}',
+    'cleanup_error': 'Cleanup Error',
+    'cleanup_error_msg': 'Failed to open cleanup window: {}',
+    'deletion_error': 'Deletion Error',
+    'deletion_error_msg': 'Failed to delete files: {}',
+    'history_error': 'History Error',
+    'history_error_msg': 'Failed to open history: {}',
+    'export_error': 'Export Error',
+    'export_error_msg': 'Export failed: {}',
+    'clear_error': 'Clear Error',
+    'clear_error_msg': 'Failed to clear data: {}',
+    
+    # Dialogs - Confirmations
+    'confirm': 'Confirm',
+    'confirm_cancel': 'Confirm Cancel',
+    'cancel_downloads': 'Cancel selected download(s)?',
+    'cancel_active': 'Cancel {} active download(s)?',
+    'clear_queue': 'Clear all {} downloads from queue?',
+    'confirm_deletion': 'Confirm Deletion',
+    'delete_files_warning': 'Are you sure you want to delete {} file(s)?\n\nThis action cannot be undone!',
+    'confirm_reset': 'Confirm Reset',
+    'confirm_reset_msg': 'Reset all settings to default values?',
+    'confirm_clear_data': 'Confirm Clear ALL Data',
+    'clear_data_msg': 'This will delete:\n\n• All download history ({} records)\n• All application settings\n• All downloaded files ({} files)\n\nThis action cannot be undone!\n\nAre you absolutely sure?',
+    'clear_history_options': 'Clear History Options',
+    'clear_history_msg': 'What would you like to clear?\n\n• Yes: Clear history records only (keep files)\n• No: Clear history AND delete downloaded files\n• Cancel: Do nothing',
+    
+    # Duplicate File
+    'duplicate_found': 'Duplicate File Found',
+    'duplicate_msg': "File '{}' already exists.\n\nWhat would you like to do?\n\n• Yes: Rename new file\n• No: Overwrite existing file\n• Cancel: Skip this download",
+    'skipped': 'Skipped',
+    'skipped_dup': 'Skipped duplicate file: {}',
+    
+    # Queue item status formats
+    'status_with_progress': '{} | {:.1f}% | {:.2f} MB/s',
+    'status_with_size': '{} | {:.1f}% | {:.2f} MB/s | {:.1f} MB',
+    'status_error_msg': '{} | {}',
+    
+    # Timestamps
+    'added': 'Added: {}',
+    'started': 'Started: {}',
+    'finished': 'Finished: {}',
+    'timestamp_format': '%H:%M:%S',
+    
+    # Context Menu
+    'cut': 'Cut',
+    'copy': 'Copy',
+    'paste': 'Paste',
+    'select_all': 'Select All',
+    
+    # Export
+    'export_options': 'Export Options',
+    'export_csv_title': 'Save CSV File',
+    'csv_files': 'CSV files',
+    'all_files': 'All files',
+    
+    # Theme
+    'theme_changed': 'Theme: {}',
+    
+    # Size units
+    'size_mb': '{:.1f} MB',
+    'size_gb': '{:.2f} GB',
+    'size_bytes': '{} bytes',
+}
+

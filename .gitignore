@@ -43,3 +43,4 @@ logs/
 tests/desktop_echo.spec
 download_history.json
 src/EchoFetch.spec
+src/startup_log.txt

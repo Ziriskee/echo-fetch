@@ -9,6 +9,7 @@ import uuid
 from tkinter import filedialog, messagebox
 import sys
 import os
+import importlib
 
 from matplotlib.pyplot import step
 from regex import T
@@ -102,7 +103,7 @@ class DownloadManagerUI(ctk.CTk):
             print(f"Step 5: Apply UI scale took {time.time() - t:.3f}s")
 
             t = time.time()
-            self.title("Echo-fetch")
+            self.title(self._s('app_title'))
             self.geometry("1250x740")
             print(f"Step 6: Set window properties took {time.time() - t:.3f}s")
 
@@ -121,6 +122,8 @@ class DownloadManagerUI(ctk.CTk):
             self.thread_speed = []
             self.thread_percents = []
             self.downloader_paused = False
+            self.current_lang = self._load_setting('language', 'en')
+            self.strings = self._load_language(self.current_lang)
             print(f"Step 7: Initialize data structures took {time.time() - t:.3f}s") 
             
             t = time.time()
@@ -171,6 +174,46 @@ class DownloadManagerUI(ctk.CTk):
         except Exception as e:
             print(f"Could not load theme preference: {e}")
         return "Dark"  # Default theme
+
+    def _load_language(self, lang_code):
+        """Load language strings with fallback support"""
+        try:
+            module = importlib.import_module(f'locales.{lang_code}')
+            return module.LANG
+        except (ImportError, AttributeError):
+            # fallback to English
+            from locales import en
+            return en.LANG
+
+    def _s(self, key, *args):
+        """
+        Get a localized string with fallback support.
+        Usage: self._s('key') or self._s('key', arg1, arg2) for format strings
+        """
+        # Try to get from current language
+        string_value = self.strings.get(key)
+        
+        # If not found, try English fallback
+        if string_value is None:
+            try:
+                from locales import en
+                string_value = en.LANG.get(key)
+            except:
+                string_value = key  # Ultimate fallback: show the key itself
+        
+        # If there are format arguments, apply them
+        if args:
+            try:
+                return string_value.format(*args)
+            except (AttributeError, ValueError):
+                return string_value
+        
+        return string_value
+
+    def change_language(self, choice):
+        self._save_setting('language', choice)
+        messagebox.showinfo("Restart Required", "Language change will take effect after restart.")
+        # Optionally, restart the app programmatically (tricky) or just tell user.
 
     def _create_widgets(self):
         """Create and arrange all UI widgets"""
@@ -574,6 +617,17 @@ class DownloadManagerUI(ctk.CTk):
                                     command=self.toggle_startup)
             startup_cb.pack(anchor="w", pady=5)
             
+            # Language Section
+            lang_frame = ctk.CTkFrame(parent)
+            lang_frame.pack(fill="x", padx=10, pady=10)
+
+            ctk.CTkLabel(lang_frame, text="Language", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", pady=5)
+
+            self.lang_var = ctk.StringVar(value=self.current_lang)
+            lang_combo = ctk.CTkComboBox(lang_frame, values=["en", "es", "fr", "de", "zh"],  # add as needed
+                                        variable=self.lang_var, command=self.change_language, width=100)
+            lang_combo.pack(anchor="w", pady=5)
+
             # Minimize to tray
             self.minimize_var = ctk.BooleanVar(value=self._load_setting('minimize_to_tray', False))
             minimize_cb = ctk.CTkCheckBox(startup_frame, 
@@ -825,12 +879,12 @@ class DownloadManagerUI(ctk.CTk):
             folder_frame = ctk.CTkFrame(parent)
             folder_frame.pack(fill="x", pady=(0, 10))
             
-            ctk.CTkLabel(folder_frame, text="Download Folder:", font=ctk.CTkFont(size=14)).pack(anchor="w")
+            ctk.CTkLabel(folder_frame, text=self._s('download_folder'), font=ctk.CTkFont(size=14)).pack(anchor="w")
             
             folder_select_frame = ctk.CTkFrame(folder_frame)
             folder_select_frame.pack(fill="x", pady=5)
             
-            self.folder_path_label = ctk.CTkLabel(folder_select_frame, text=self.download_folder, 
+            self.folder_path_label = ctk.CTkLabel(folder_select_frame, text=self._s('download_folder'), 
                                                 anchor="w", width=300, wraplength=400)
             self.folder_path_label.pack(side="left", fill="x", expand=True)
             
@@ -838,7 +892,7 @@ class DownloadManagerUI(ctk.CTk):
                          command=self.select_download_folder).pack(side="right", padx=(5, 0))
             
             # URL Section
-            ctk.CTkLabel(parent, text="Download URL:", font=ctk.CTkFont(size=14)).pack(anchor="w", pady=(10, 0))
+            ctk.CTkLabel(parent, text=self._s('download_url'), font=ctk.CTkFont(size=14)).pack(anchor="w", pady=(10, 0))
             
             self.url_entry = ctk.CTkEntry(parent, width=400, font=ctk.CTkFont(size=12))
             self.url_entry.pack(fill="x", pady=5)
@@ -851,7 +905,7 @@ class DownloadManagerUI(ctk.CTk):
             batch_frame = ctk.CTkFrame(parent)
             batch_frame.pack(fill="x", pady=10)
             
-            ctk.CTkLabel(batch_frame, text="Batch Download (one URL per line):", font=ctk.CTkFont(size=14)).pack(anchor="w")
+            ctk.CTkLabel(batch_frame, text=self._s('batch_download'), font=ctk.CTkFont(size=14)).pack(anchor="w")
             
             self.batch_text = ctk.CTkTextbox(batch_frame, height=100, font=ctk.CTkFont(size=12))
             self.batch_text.pack(fill="x", pady=5)
@@ -859,7 +913,7 @@ class DownloadManagerUI(ctk.CTk):
             # Right-click menu for batch text
             self.batch_text.bind("<Button-3>", self.show_menu)
             
-            ctk.CTkButton(batch_frame, text="Add All to Queue", 
+            ctk.CTkButton(batch_frame, text=self._s('add_all_to_queue'), 
                          command=self.add_batch_to_queue).pack(pady=5)
             
             # Control Buttons
@@ -867,30 +921,30 @@ class DownloadManagerUI(ctk.CTk):
             control_frame.pack(fill="x", pady=10)
 
             
-            self.add_queue_btn = ctk.CTkButton(control_frame, text="Add to Queue", 
+            self.add_queue_btn = ctk.CTkButton(control_frame, text=self._s('add_to_queue'), 
                                              command=self.add_to_queue)
             self.add_queue_btn.pack(side="left", padx=(0, 5))
             
-            self.start_btn = ctk.CTkButton(control_frame, text="Start Download", 
+            self.start_btn = ctk.CTkButton(control_frame, text=self._s('start_download'), 
                                          command=self.start_download)
             self.start_btn.pack(side="left", padx=5)
             
-            self.pause_btn = ctk.CTkButton(control_frame, text="Pause", 
+            self.pause_btn = ctk.CTkButton(control_frame, text=self._s('pause'), 
                                          command=self.pause_download, state="disabled")
             self.pause_btn.pack(side="left", padx=5)
             
-            self.resume_btn = ctk.CTkButton(control_frame, text="Resume", 
+            self.resume_btn = ctk.CTkButton(control_frame, text=self._s('resume'), 
                                           command=self.resume_download, state="disabled")
             self.resume_btn.pack(side="left", padx=5)
 
-            self.cancel_btn = ctk.CTkButton(control_frame, text="Cancel", 
+            self.cancel_btn = ctk.CTkButton(control_frame, text=self._s('cancel'), 
                                                   command=self.cancel_current_download, 
                                                   fg_color="red", hover_color="darkred",
                                                   state="disabled")
             self.cancel_btn.pack(side="left", padx=5)
 
             # Selection info label
-            self.selection_info_label = ctk.CTkLabel(parent, text="No items selected", 
+            self.selection_info_label = ctk.CTkLabel(parent, text=self._s('no_items_selected'), 
                                                    text_color="gray", font=ctk.CTkFont(size=11))
             self.selection_info_label.pack(anchor="w", pady=(5, 0))
             
@@ -916,25 +970,25 @@ class DownloadManagerUI(ctk.CTk):
                     self.selection_info_label.configure(text="No items selected", text_color="gray")
 
             # History & Statistics Button
-            self.history_btn = ctk.CTkButton(control_frame, text="History & Stats",command=self.show_history_statistics)
+            self.history_btn = ctk.CTkButton(control_frame, text=self._s('history_stats'),command=self.show_history_statistics)
             self.history_btn.pack(side="left", padx=5)
 
-            self.preference_btn = ctk.CTkButton(control_frame, text="⚙ Preferences", 
+            self.preference_btn = ctk.CTkButton(control_frame, text=self._s('preferences'), 
                                                command=self.show_preferences, width=100)
             self.preference_btn.pack(side="left",padx=5)
 
             # Status Section
-            self.status_label = ctk.CTkLabel(parent, text="Idle", text_color="gray", font=ctk.CTkFont(size=12))
+            self.status_label = ctk.CTkLabel(parent, text=self._s('idle'), text_color="gray", font=ctk.CTkFont(size=12))
             self.status_label.pack(anchor="w", pady=5)
             
             # Overall Progress
             progress_frame = ctk.CTkFrame(parent)
             progress_frame.pack(fill="x", pady=10)
             
-            self.overall_label = ctk.CTkLabel(progress_frame, text="Overall: 0%", font=ctk.CTkFont(size=12))
+            self.overall_label = ctk.CTkLabel(progress_frame, text=self._s('overall').format(0), font=ctk.CTkFont(size=12))
             self.overall_label.pack(anchor="w")
             
-            self.overall_speed_label = ctk.CTkLabel(progress_frame, text="Speed: 0.00 MB/s", font=ctk.CTkFont(size=12))
+            self.overall_speed_label = ctk.CTkLabel(progress_frame, text=self._s('speed').format(0.00), font=ctk.CTkFont(size=12))
             self.overall_speed_label.pack(anchor="w")
             
             self.overall_progress = ctk.CTkProgressBar(progress_frame, mode="determinate")
@@ -942,14 +996,14 @@ class DownloadManagerUI(ctk.CTk):
             self.overall_progress.pack(fill="x", pady=5)
             
             # Current file info
-            self.current_file_label = ctk.CTkLabel(progress_frame, text="Current: None", text_color="gray", font=ctk.CTkFont(size=12))
+            self.current_file_label = ctk.CTkLabel(progress_frame, text=self._s('current_none'), text_color="gray", font=ctk.CTkFont(size=12))
             self.current_file_label.pack(anchor="w")
             
             # Thread Status Section
             thread_frame = ctk.CTkFrame(parent)
             thread_frame.pack(fill="both", expand=True, pady=10)
             
-            ctk.CTkLabel(thread_frame, text="Thread Status:", font=ctk.CTkFont(size=14)).pack(anchor="w")
+            ctk.CTkLabel(thread_frame, text=self._s('thread_status'), font=ctk.CTkFont(size=14)).pack(anchor="w")
             
             self.thread_scrollable_frame = ctk.CTkScrollableFrame(thread_frame, height=150)
             self.thread_scrollable_frame.pack(fill="both", expand=True, padx=5, pady=5)
