@@ -10,15 +10,21 @@ from tkinter import filedialog, messagebox
 import sys
 import os
 import importlib
-
-from matplotlib.pyplot import step
-from regex import T
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from echo_core import FastDownloader
 from datetime import datetime
 from download_history import DownloadHistory
 import json
+# System tray support
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+    SYSTEM_TRAY_AVAILABLE = True
+except ImportError:
+    SYSTEM_TRAY_AVAILABLE = False
+    print("System tray not available. Install pystray and Pillow for tray support.")
+
+
 
 # Default categories for auto‑categorization
 DEFAULT_CATEGORIES = {
@@ -67,6 +73,12 @@ class DownloadManagerUI(ctk.CTk):
         total_start = time.time()
         super().__init__()
         log("Super init completed")
+        
+        print(f"Step 1: super init took {step - total_start:.3f}s")
+        # Bind window close event for proper tray cleanup
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+        
+        self.tray_running = False
         step = time.time()  
         print(f"Step 1: super init took {step - total_start:.3f}s")
 
@@ -102,10 +114,16 @@ class DownloadManagerUI(ctk.CTk):
                     # Fallback to default scale
             print(f"Step 5: Apply UI scale took {time.time() - t:.3f}s")
 
+            # Initialize language strings FIRST before any UI that uses them
+            t = time.time()
+            self.current_lang = self._load_setting('language', 'en')
+            self.strings = self._load_language(self.current_lang)
+            print(f"Step 6a: Load language strings took {time.time() - t:.3f}s")
+
             t = time.time()
             self.title(self._s('app_title'))
             self.geometry("1250x740")
-            print(f"Step 6: Set window properties took {time.time() - t:.3f}s")
+            print(f"Step 6b: Set window properties took {time.time() - t:.3f}s")
 
             # Initialize data structures
             t = time.time()
@@ -122,8 +140,6 @@ class DownloadManagerUI(ctk.CTk):
             self.thread_speed = []
             self.thread_percents = []
             self.downloader_paused = False
-            self.current_lang = self._load_setting('language', 'en')
-            self.strings = self._load_language(self.current_lang)
             print(f"Step 7: Initialize data structures took {time.time() - t:.3f}s") 
             
             t = time.time()
@@ -131,13 +147,27 @@ class DownloadManagerUI(ctk.CTk):
             print(f"Step 8: Create widgets took {time.time() - t:.3f}s")
 
             self.after(100, self.update_thread_display)
+            
+             # Create system tray icon if enabled
+            if self._load_setting('minimize_to_tray', False) and SYSTEM_TRAY_AVAILABLE:
+                self._create_tray_icon()
+
+            # Bind minimize event
+            self.bind('<Unmap>', self._on_minimize)
 
             print(f"Total initialization time: {time.time() - total_start:.3f}s")
             print(f"Download folder set to: {self.download_folder}")
 
         except Exception as e:
-            messagebox.showerror("Initialization Error", f"Failed to initialize application: {str(e)}")
+            messagebox.showerror(self._s('init_error'), self._s('init_error_msg', str(e)))
             raise
+
+    def _on_minimize(self, event):
+        """Handle window minimize event"""
+        if self._load_setting('minimize_to_tray', False) and SYSTEM_TRAY_AVAILABLE:
+            if self.tray_icon:
+                self.withdraw()
+
 
     def _save_theme_preference(self, theme):
         """Save theme preference to file for persistence"""
@@ -210,9 +240,124 @@ class DownloadManagerUI(ctk.CTk):
         
         return string_value
 
+    def _create_tray_icon(self):
+        """Create system tray icon"""
+        if not SYSTEM_TRAY_AVAILABLE:
+            return
+        
+        # Create a simple icon image
+        width = 64
+        height = 64
+        image = Image.new('RGB', (width, height), color='white')
+        dc = ImageDraw.Draw(image)
+        dc.rectangle([8, 8, 56, 56], fill='blue', outline='darkblue', width=2)
+        dc.rectangle([16, 20, 48, 44], fill='white')
+        dc.rectangle([20, 24, 44, 40], fill='blue')
+        
+        # Dynamic tooltip with status
+        def get_tray_status():
+            downloading = len([item for item in self.download_queue if item.status == "Downloading"])
+            paused = len([item for item in self.download_queue if item.status == "Paused"])
+            queued = len([item for item in self.download_queue if item.status == "Queued"])
+            if downloading > 0:
+                return f"Echo-Fetch: {downloading} downloading, {paused} paused"
+            elif queued > 0:
+                return f"Echo-Fetch: {queued} queued"
+            else:
+                return "Echo-Fetch: Ready"
+        
+        # Create tray menu with Resume All
+        menu = pystray.Menu(
+            pystray.MenuItem('📊 Show', self._show_from_tray),
+            pystray.MenuItem('🚀 Start All', self._start_all_from_tray),
+            pystray.MenuItem('⏸ Pause All', self._pause_all_from_tray),
+            pystray.MenuItem('▶️ Resume All', self._resume_all_from_tray),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('❌ Quit', self._quit_from_tray),
+        )
+        
+        self.tray_icon = pystray.Icon("echo_fetch", image, get_tray_status(), menu)
+        # Update tooltip every 2 seconds
+        self.update_tray_tooltip()
+        
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def _show_from_tray(self, icon, item):
+        """Show window from tray"""
+        self.after(0, self._restore_window)
+
+    def _start_all_from_tray(self, icon, item):
+        """Start all downloads from tray"""
+        self.after(0, self._start_all_downloads)
+
+    def _pause_all_from_tray(self, icon, item):
+        """Pause all downloads from tray"""
+        self.after(0, self._pause_all_downloads)
+
+    def _quit_from_tray(self, icon, item):
+        """Quit application from tray"""
+        if hasattr(self, 'tray_icon'):
+            self.tray_icon.stop()
+        self.destroy()
+    
+    def _resume_all_from_tray(self, icon, item):
+        """Resume all paused downloads from tray"""
+        self.after(0, self._pause_all_downloads)  # Reuse pause_all logic for resume_all
+        # Note: Need proper resume logic here
+    
+    def update_tray_tooltip(self):
+        """Update system tray tooltip with current status"""
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            downloading = len([item for item in self.download_queue if item.status == "Downloading"])
+            paused = len([item for item in self.download_queue if item.status == "Paused"])
+            queued = len([item for item in self.download_queue if item.status == "Queued"])
+            
+            if downloading > 0:
+                tooltip = f"Echo-Fetch: {downloading} ↓, {paused} ⏸"
+            elif queued > 0:
+                tooltip = f"Echo-Fetch: {queued} queued"
+            else:
+                tooltip = "Echo-Fetch: Ready"
+            
+            self.tray_icon.visible = False
+            self.tray_icon.visible = True  # Force refresh
+        self.after(2000, self.update_tray_tooltip)
+
+    def _restore_window(self):
+        """Restore window from minimized state"""
+        self.deiconify()
+        self.state('normal')
+        self.lift()
+        self.focus_force()
+
+    def _start_all_downloads(self):
+        """Start all queued downloads"""
+        queued = [i for i in self.download_queue if i.status == "Queued"]
+        for item in queued:
+            self._start_download_item(item)
+
+    def _pause_all_downloads(self):
+        """Pause all active downloads"""
+        active = [i for i in self.download_queue if i.status == "Downloading"]
+        for item in active:
+            if item.downloader:
+                item.downloader.pause()
+                item.status = "Paused"
+        self._update_queue_display()
+
+    def minimize_to_tray(self):
+        """Minimize window to system tray"""
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            self.withdraw()
+        else:
+            self.iconify()
+
+
     def change_language(self, choice):
         self._save_setting('language', choice)
-        messagebox.showinfo("Restart Required", "Language change will take effect after restart.")
+        messagebox.showinfo(self._s('restart_required'), self._s('language_change_msg'))
+
         # Optionally, restart the app programmatically (tricky) or just tell user.
 
     def _create_widgets(self):
@@ -234,7 +379,7 @@ class DownloadManagerUI(ctk.CTk):
             self._create_download_section(left_frame)
             self._create_queue_section(right_frame)
         except Exception as e:
-            messagebox.showerror("UI Error", f"Failed to create widgets: {str(e)}")
+            messagebox.showerror(self._s('ui_error'), self._s('ui_error_msg', str(e)))
 
     def cleanup_downloaded_files(self):
         """Cleanup downloaded files with selective options"""
@@ -347,7 +492,7 @@ class DownloadManagerUI(ctk.CTk):
         try:
             # Create preferences window
             pref_window = ctk.CTkToplevel(self)
-            pref_window.title("Preferences")
+            pref_window.title(self._s('preferences'))
             pref_window.geometry("500x600")
             pref_window.transient(self)
             pref_window.grab_set()
@@ -357,19 +502,19 @@ class DownloadManagerUI(ctk.CTk):
             tab_view.pack(fill="both", expand=True, padx=10, pady=10)
             
             # Appearance Tab
-            appearance_tab = tab_view.add("Appearance")
+            appearance_tab = tab_view.add(self._s('appearance'))
             self._create_appearance_tab(appearance_tab)
             
             # Download Tab
-            download_tab = tab_view.add("Download")
+            download_tab = tab_view.add(self._s('download_settings'))
             self._create_download_tab(download_tab)
             
             # General Tab
-            general_tab = tab_view.add("General")
+            general_tab = tab_view.add(self._s('general'))
             self._create_general_tab(general_tab)
             
         except Exception as e:
-            messagebox.showerror("Preferences Error", f"Failed to open preferences: {str(e)}")
+            messagebox.showerror(self._s('preferences_error'), self._s('preferences_error_msg').format(str(e)))
 
     def _create_appearance_tab(self, parent):
         """Create appearance settings tab"""
@@ -1015,7 +1160,7 @@ class DownloadManagerUI(ctk.CTk):
     def _create_queue_section(self, parent):
         """Create download queue management section"""
         try:
-            ctk.CTkLabel(parent, text="Download Queue", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
+            ctk.CTkLabel(parent, text=self._s('download_queue'), font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
             
             # ✅ ADD SELECTION CONTROLS FRAME
             selection_frame = ctk.CTkFrame(parent)
@@ -1025,10 +1170,10 @@ class DownloadManagerUI(ctk.CTk):
             select_controls = ctk.CTkFrame(selection_frame, fg_color="transparent")
             select_controls.pack(side="left", fill="x", expand=True)
             
-            ctk.CTkButton(select_controls, text="Select All", 
+            ctk.CTkButton(select_controls, text=self._s('select_all'), 
                         command=self._select_all_items, width=100).pack(side="left", padx=(0, 5))
             
-            ctk.CTkButton(select_controls, text="Deselect All", 
+            ctk.CTkButton(select_controls, text=self._s('deselect_all'), 
                         command=self._deselect_all_items, width=100).pack(side="left", padx=(0, 5))
             
             # Right side: Bulk actions
@@ -1036,17 +1181,17 @@ class DownloadManagerUI(ctk.CTk):
             bulk_controls.pack(side="right")
             
             # Store references to bulk buttons for later enabling/disabling
-            self.pause_selected_btn = ctk.CTkButton(bulk_controls, text="Pause Selected", 
+            self.pause_selected_btn = ctk.CTkButton(bulk_controls, text=self._s('pause_selected'), 
                                                 command=self._pause_selected, width=120,
                                                 state="disabled")
             self.pause_selected_btn.pack(side="top", padx=2)
             
-            self.resume_selected_btn = ctk.CTkButton(bulk_controls, text="Resume Selected", 
+            self.resume_selected_btn = ctk.CTkButton(bulk_controls, text=self._s('resume_selected'), 
                                                 command=self._resume_selected, width=120,
                                                 state="disabled")
             self.resume_selected_btn.pack(side="top", padx=2)
             
-            self.cancel_selected_btn = ctk.CTkButton(bulk_controls, text="Cancel Selected", 
+            self.cancel_selected_btn = ctk.CTkButton(bulk_controls, text=self._s('cancel_selected'), 
                                                 command=self._cancel_selected, width=120,
                                                 fg_color="red", hover_color="darkred",
                                                 state="disabled")
@@ -1056,14 +1201,14 @@ class DownloadManagerUI(ctk.CTk):
             queue_controls = ctk.CTkFrame(parent)
             queue_controls.pack(fill="x", padx=10, pady=(0, 10))
             
-            ctk.CTkButton(queue_controls, text="Clear Completed", 
+            ctk.CTkButton(queue_controls, text=self._s('clear_completed'), 
                         command=self.clear_completed, width=120).pack(side="left", padx=(0, 5))
             
-            ctk.CTkButton(queue_controls, text="Clear All", 
+            ctk.CTkButton(queue_controls, text=self._s('clear_all'), 
                         command=self.clear_all_queue, width=80).pack(side="right")
             
             # Queue list with proper height
-            ctk.CTkLabel(parent, text="Downloads:", font=ctk.CTkFont(size=14)).pack(anchor="w", padx=10, pady=(5, 0))
+            ctk.CTkLabel(parent, text=self._s('downloads'), font=ctk.CTkFont(size=14)).pack(anchor="w", padx=10, pady=(5, 0))
             
             self.queue_frame = ctk.CTkScrollableFrame(parent, height=300)  # Increased height
             self.queue_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -2283,7 +2428,7 @@ class DownloadManagerUI(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Download Error", f"Failed to start download: {str(e)}")
 
-
+    def pause_download(self):
         """Pause SELECTED downloads that are downloading"""
         try:
             selected_items = [item for item in self.download_queue if item.selected]

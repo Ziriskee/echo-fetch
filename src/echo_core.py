@@ -1,10 +1,9 @@
-from fileinput import filename
-
 import requests
 import threading
 import os
 import re
 import time
+import psutil
 
 MAX_RETRIES = 10
 RETRY_DELAY = 2  # seconds
@@ -50,10 +49,6 @@ class FastDownloader:
             # ✅ HANDLE 403 ERRORS DURING HEAD REQUEST
             if response.status_code == 403:
                 print("⚠ Server blocked HEAD request with 403 Forbidden, trying GET request for file size...")
-                response = self.session.get(url, stream=True, timeout=10, headers={'Range': 'bytes=0-0'})
-
-
-                #try with GET instead for servers that block HEAD requests
                 response = self.session.get(url, stream=True, timeout=10, headers={'Range': 'bytes=0-0'})
 
                 if response.status_code in (200, 206):
@@ -106,7 +101,7 @@ class FastDownloader:
                 self.log("Trying alternative connection method...","info")
                 response = self.session.get(url, stream=True, timeout=10)
                 if response.status_code == 200:
-                    self.file_size = self.extract_file_size(response)
+                    self.file_size = self._extract_file_size(response)
                     self.filename = sanitize_filename(url)
                     self.num_threads = 1
                     self.range_supported = False
@@ -153,7 +148,6 @@ class FastDownloader:
             print(f"{'❌' if level == 'error' else '⚠'} {message}")
 
     def choose_optimal_threads(self, file_size_bytes, default_threads):
-        import psutil
         """Choose optimal thread count based on file size and system capabilities"""
         if file_size_bytes == 0:
             return 1
@@ -290,11 +284,11 @@ class FastDownloader:
 
     def pause(self):
         self.paused = True
-        print("⏸ Download Paused: {self.filename}")
+        print(f"⏸ Download Paused: {self.filename}")
 
     def resume(self):
         self.paused = False
-        print("▶ Download Resumed: {self.filename}")
+        print(f"▶ Download Resumed: {self.filename}")
 
     def merge_parts(self):
         print("\n🔗 Merging downloaded parts...")

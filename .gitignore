@@ -44,3 +44,6 @@ tests/desktop_echo.spec
 download_history.json
 src/EchoFetch.spec
 src/startup_log.txt
+src/tasks.json
+src/TODO.md
+src/apply_changes.py
