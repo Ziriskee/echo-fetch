@@ -74,13 +74,9 @@ class DownloadManagerUI(ctk.CTk):
         super().__init__()
         log("Super init completed")
         
-        print(f"Step 1: super init took {step - total_start:.3f}s")
         # Bind window close event for proper tray cleanup
-        self.protocol("WM_DELETE_WINDOW", self._on_closing)
-        
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.tray_running = False
-        step = time.time()  
-        print(f"Step 1: super init took {step - total_start:.3f}s")
 
         try:
             # Load settings
@@ -98,11 +94,12 @@ class DownloadManagerUI(ctk.CTk):
             t = time.time()
             self.download_folder = settings.get('download_folder', os.path.expanduser("~/Downloads"))
             self.download_folder = os.path.normpath(self.download_folder)
-    
-            # 🔥 INITIALIZE DUPLICATE CHECK SETTINGS 🔥
+
+            print(f"Step 4: Load download folder took {time.time() - t:.3f}s")
+
+            # Initialize vars AFTER window fully created
             self.skip_duplicates_var = tk.BooleanVar(value=settings.get('skip_duplicates', False))
             self.auto_rename_var = tk.BooleanVar(value=settings.get('auto_rename', False))
-            print(f"Step 4: Load download folder and duplicate settings took {time.time() - t:.3f}s")
 
             saved_scale = settings.get('ui_scale',1.0)
             if saved_scale != 1.0:
@@ -161,6 +158,33 @@ class DownloadManagerUI(ctk.CTk):
         except Exception as e:
             messagebox.showerror(self._s('init_error'), self._s('init_error_msg', str(e)))
             raise
+
+    def on_closing(self):
+        """Handle window close event safely"""
+        try:
+            # Stop tray icon if it exists
+            if hasattr(self, 'tray_icon') and self.tray_icon:
+                self.tray_icon.stop()
+                self.tray_icon = None
+            
+            # Stop tray tooltip update loop
+            if hasattr(self, '_updating_tooltip'):
+                self._updating_tooltip = False
+            
+            # Clean up active downloads
+            for item in self.download_queue:
+                if item.downloader and item.status == "Downloading":
+                    item.downloader.paused = True
+            
+            # Destroy the window
+            self.destroy()
+        except Exception as e:
+            print(f"Close error: {e}")
+            # Force destroy even if error occurs
+            try:
+                self.destroy()
+            except:
+                pass
 
     def _on_minimize(self, event):
         """Handle window minimize event"""
@@ -272,6 +296,7 @@ class DownloadManagerUI(ctk.CTk):
             pystray.MenuItem('🚀 Start All', self._start_all_from_tray),
             pystray.MenuItem('⏸ Pause All', self._pause_all_from_tray),
             pystray.MenuItem('▶️ Resume All', self._resume_all_from_tray),
+            pystray.MenuItem('🗑️ Clear Completed', self.clear_completed),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem('❌ Quit', self._quit_from_tray),
         )
@@ -280,7 +305,6 @@ class DownloadManagerUI(ctk.CTk):
         # Update tooltip every 2 seconds
         self.update_tray_tooltip()
         
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def _show_from_tray(self, icon, item):
@@ -302,27 +326,41 @@ class DownloadManagerUI(ctk.CTk):
         self.destroy()
     
     def _resume_all_from_tray(self, icon, item):
-        """Resume all paused downloads from tray"""
-        self.after(0, self._pause_all_downloads)  # Reuse pause_all logic for resume_all
-        # Note: Need proper resume logic here
+        """Resume all paused downloads from tray - FIXED"""
+        self.after(0, self._resume_all_downloads)
+    
+    def _resume_all_downloads(self):
+        """Resume all paused downloads"""
+        paused = [item for item in self.download_queue if item.status == "Paused"]
+        for item in paused:
+            if item.downloader:
+                item.downloader.resume()
+                item.status = "Downloading"
+            elif not item.downloader:
+                item.status = "Queued"
+        self._update_queue_display()
+        self.status_label.configure(text=f"Resumed {len(paused)} downloads", text_color="white")
     
     def update_tray_tooltip(self):
-        """Update system tray tooltip with current status"""
-        if hasattr(self, 'tray_icon') and self.tray_icon:
-            downloading = len([item for item in self.download_queue if item.status == "Downloading"])
-            paused = len([item for item in self.download_queue if item.status == "Paused"])
-            queued = len([item for item in self.download_queue if item.status == "Queued"])
+        """Update system tray tooltip with current status - FIXED NO CRASH"""
+        try:
+            if not self.winfo_exists() or not hasattr(self, 'tray_icon') or not self.tray_icon:
+                return
             
-            if downloading > 0:
-                tooltip = f"Echo-Fetch: {downloading} ↓, {paused} ⏸"
-            elif queued > 0:
-                tooltip = f"Echo-Fetch: {queued} queued"
-            else:
-                tooltip = "Echo-Fetch: Ready"
+            downloading = sum(1 for item in self.download_queue if item.status == "Downloading")
+            paused = sum(1 for item in self.download_queue if item.status == "Paused")
             
-            self.tray_icon.visible = False
-            self.tray_icon.visible = True  # Force refresh
-        self.after(2000, self.update_tray_tooltip)
+            tooltip = f"Echo-Fetch ↓{downloading} ⏸{paused}" if downloading > 0 else "Echo-Fetch Ready"
+            
+            try:
+                self.tray_icon.title = tooltip
+            except:
+                pass
+            
+            if self.winfo_exists():
+                self.after(3000, self.update_tray_tooltip)
+        except:
+            pass
 
     def _restore_window(self):
         """Restore window from minimized state"""
@@ -2438,49 +2476,6 @@ class DownloadManagerUI(ctk.CTk):
                 paused_count = 0
                 for item in selected_items:
                     if item.status == "Downloading" and item.downloader:
-                        item.downloader.pause()
-                        item.status = "Paused"
-                        paused_count += 1
-                
-                if paused_count > 0:
-                    self._update_queue_display()
-                    self.status_label.configure(
-                        text=f"Paused {paused_count} selected item(s)", 
-                        text_color="orange"
-                    )
-                    print(f"⏸ Paused {paused_count} selected item(s)")
-                else:
-                    messagebox.showinfo("Info", "No downloading items selected to pause")
-            else:
-                # If nothing selected, pause current active download
-                active_downloads = [item for item in self.download_queue 
-                                  if item.status == "Downloading"]
-                if active_downloads:
-                    for item in active_downloads:
-                        if item.downloader:
-                            item.downloader.pause()
-                            item.status = "Paused"
-                    self._update_queue_display()
-                    self.status_label.configure(
-                        text=f"Paused {len(active_downloads)} active download(s)", 
-                        text_color="orange"
-                    )
-                else:
-                    messagebox.showinfo("Info", "No active downloads to pause")
-                    
-        except Exception as e:
-            messagebox.showerror("Pause Error", f"Failed to pause download: {str(e)}")
-
-    def pause_download(self):
-        """Pause SELECTED downloads that are downloading"""
-        try:
-            selected_items = [item for item in self.download_queue if item.selected]
-            
-            if selected_items:
-                # Pause all selected downloading items
-                paused_count = 0
-                for item in selected_items:
-                    if item.status == "Downloading" and item.downloader:
                         # Ensure the downloader has a paused attribute
                         if not hasattr(item.downloader, 'paused'):
                             print(f"⚠ Downloader missing paused attribute: {item.filename}")
@@ -3013,6 +3008,18 @@ class DownloadManagerUI(ctk.CTk):
         self._update_queue_display()
         self._update_bulk_buttons_state()
         print(f"✕ Cancelled {len(selected_items)} selected items")
+
+    def _resume_all_downloads(self):
+        """Resume all paused downloads"""
+        paused = [i for i in self.download_queue if i.status == "Paused"]
+        for item in paused:
+            if item.downloader:
+                item.downloader.resume()
+                item.status = "Downloading"
+            elif not item.downloader:
+                item.status = "Queued"
+        self._update_queue_display()
+        self.status_label.configure(text=f"Resumed {len(paused)} downloads", text_color="white")
 
     def _update_bulk_buttons_state(self):
         """Enable/disable bulk action buttons based on selection and status"""
