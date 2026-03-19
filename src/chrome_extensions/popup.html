@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            width: 260px;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+        }
+
+        h3 {
+            margin: 5px 0;
+            color: #3B8ED0;
+        }
+
+        .btn {
+            background: #3B8ED0;
+            color: white;
+            border: none;
+            padding: 12px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-weight: bold;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            background: #2a6ba8;
+        }
+
+        .status {
+            margin-top: 10px;
+            font-size: 12px;
+            padding: 8px;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            display: block;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            display: block;
+        }
+
+        .links-section {
+            border-top: 1px solid #eee;
+            margin-top: 15px;
+            padding-top: 10px;
+        }
+
+        .current-link {
+            word-break: break-all;
+            font-size: 11px;
+            max-height: 30px;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <h3>🔗 Echo-Fetch</h3>
+    <button id="captureBtn" class="btn">🚀 Capture Current Page</button>
+
+    <div class="links-section">
+        <small>Right-click any link → "Download with Echo-Fetch"</small>
+    </div>
+
+    <div id="statusDiv" class="status"></div>
+    <script src="popup.js"></script>
+</body>
+
+</html>

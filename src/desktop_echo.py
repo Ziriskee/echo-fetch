@@ -24,7 +24,11 @@ except ImportError:
     SYSTEM_TRAY_AVAILABLE = False
     print("System tray not available. Install pystray and Pillow for tray support.")
 
-
+# browser extension support
+import http.server
+import socketserver
+import threading
+import json
 
 # Default categories for auto‑categorization
 DEFAULT_CATEGORIES = {
@@ -152,6 +156,13 @@ class DownloadManagerUI(ctk.CTk):
             # Bind minimize event
             self.bind('<Unmap>', self._on_minimize)
 
+            # 🔥 ADD API SERVER START HERE - AFTER ALL UI IS READY
+            api_enabled = self._load_setting('api_enabled', True)
+            api_port = self._load_setting('api_port', 5000)
+            if api_enabled:
+                self.after(500, lambda: self._start_api_server(api_port))  # Delay to ensure UI ready
+                print("🔌 API server startup scheduled")
+
             print(f"Total initialization time: {time.time() - total_start:.3f}s")
             print(f"Download folder set to: {self.download_folder}")
 
@@ -159,9 +170,70 @@ class DownloadManagerUI(ctk.CTk):
             messagebox.showerror(self._s('init_error'), self._s('init_error_msg', str(e)))
             raise
 
-    def on_closing(self):
-        """Handle window close event safely"""
+
+
+    def _start_api_server(self, port=5000):
+        """Start local API server to receive browser requests"""
         try:
+            self.api_port = port
+            
+
+            
+            # Create TCP server bound to localhost only (secure!)
+            from APIServerHandler import APIServerHandler
+            self.local_api_server = socketserver.TCPServer(("localhost", port), lambda *args, **kwargs: APIServerHandler(*args, ui_instance=self, **kwargs))
+            self.local_api_server.server_instance = self  # Pass reference to UI instance
+            self.api_thread = threading.Thread(target=self.local_api_server.serve_forever, daemon=True)
+            self.api_thread.start()
+            
+            self._save_setting('api_enabled', True)
+            self._save_setting('api_port', port)
+            print(f"🔌 Echo-Fetch API ready on http://localhost:{port}")
+            
+            # Optional: Show API status in preferences window if open
+            if hasattr(self, 'pref_folder_label'):
+                api_indicator = ctk.CTkLabel(self, text="🔌 API Active ✓", text_color="green")
+                api_indicator.pack(side="top", pady=5)
+            
+        except Exception as e:
+            print(f"Failed to start API server: {e}")
+            messagebox.showerror("API Error", f"Server failed to start:\n{str(e)}\n\nPort might be in use.")
+
+    def _handle_browser_download(self, url, filename):
+        """Handle download request from browser extension API - thread safe"""
+        if not self.winfo_exists():
+            print("Warning: UI destroyed, cannot add download")
+            return
+        
+        if not url:
+            print("Warning: No URL provided from browser extension")
+            return
+        
+        # Add to queue (same as manual add)
+        download_item = DownloadItem(url, self.download_folder, filename or None)
+        self.download_queue.append(download_item)
+        self._update_queue_display()
+        print(f"📥 Added from browser API: {url}")
+
+    def stop_api_server(self):
+        """Stop the local API server safely"""
+        try:
+            if hasattr(self, 'local_api_server') and self.local_api_server:
+                self.local_api_server.shutdown()
+                self.local_api_server.server_close()
+                self.local_api_server = None
+                if hasattr(self, 'api_thread') and self.api_thread.is_alive():
+                    self.api_thread.join(timeout=2)
+                print("🛑 API server stopped")
+        except Exception as e:
+            print(f"Error stopping API server: {e}")
+
+    def on_closing(self):
+        """Handle window close event safely - CONSOLIDATED"""
+        try:
+            # Stop API server first
+            self.stop_api_server()
+            
             # Stop tray icon if it exists
             if hasattr(self, 'tray_icon') and self.tray_icon:
                 self.tray_icon.stop()
@@ -180,18 +252,12 @@ class DownloadManagerUI(ctk.CTk):
             self.destroy()
         except Exception as e:
             print(f"Close error: {e}")
-            # Force destroy even if error occurs
-            try:
-                self.destroy()
-            except:
-                pass
 
     def _on_minimize(self, event):
         """Handle window minimize event"""
         if self._load_setting('minimize_to_tray', False) and SYSTEM_TRAY_AVAILABLE:
             if self.tray_icon:
                 self.withdraw()
-
 
     def _save_theme_preference(self, theme):
         """Save theme preference to file for persistence"""
@@ -3093,3 +3159,4 @@ if __name__ == "__main__":
         app.mainloop()
     except Exception as e:
         print(f"Application error: {e}")
+
